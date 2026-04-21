@@ -1,0 +1,12 @@
+{
+  "gemm": {
+    "image_name": "registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:operate",
+    "docker_options": "--gpus all --shm-size=10g",
+    "volumes": [
+      "/mnt/nvme1n1/dongkaixing:/mnt/nvme1n1/dongkaixing"
+    ],
+    "work_dir": "/mnt/nvme1n1/dongkaixing/sglang/3rdparty/AIChipBenchmark/operators",
+    "task_command": "cd speed_test/cuda_ops && mkdir -p build && cd build && rm -rf * && cmake -DCUDNN_INCLUDE_DIR=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/include -DCUDNN_LIBRARIES=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn.so.9  .. && make && cd ../../ && python test_gemm.py gemm_f16.csv 16 0",
+    "hints": ""
+  }
+}
