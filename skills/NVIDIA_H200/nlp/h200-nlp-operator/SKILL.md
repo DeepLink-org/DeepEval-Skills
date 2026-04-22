@@ -1,11 +1,11 @@
 ---
-name: h200-language-operator
+name: h200-nlp-operator
 description: H200芯片-语言场景-算子任务的评测流程。用于指导executor完成docker容器启动、脚本生成、上传和执行的完整评测链路。参数：$0=卡数，$1=测试用例名称（如gemm、Conv2d等）。
 ---
 
 # H200 语言场景 算子评测
 
-芯片: H200 | 场景: 语言 | 任务类型: 算子
+芯片: H200 | 场景: nlp | 任务类型: 算子
 卡数: $0 | 测试用例: $1
 
 ## 第一步: 加载评测配置
@@ -18,31 +18,36 @@ description: H200芯片-语言场景-算子任务的评测流程。用于指导e
 从匹配的配置中获取以下字段：
 - `image_name`: Docker 镜像名
 - `docker_options`: docker run 附加参数（如 --gpus、--shm-size 等）
-- `volumes`: 挂载目录列表（host:container 格式）
-- `work_dir`: 容器内工作目录
-- `task_command`: 评测执行命令
 - `hints`: 补充说明（可选，仅当有无法结构化的额外信息时填写）
+
+以下字段为固定约定，不从配置中读取：
+- **volumes**: 将本 skill 目录下的 `workspace` 映射到容器的 `/workspace`
+- **work_dir**: 固定为 `/workspace`
 
 ## 第二步: 生成 docker run 命令
 
 根据配置字段直接拼接完整的 docker run 命令：
 
+容器名格式为 `h200-nlp-op-$1-<TIMESTAMP>`，其中 `<TIMESTAMP>` 为当前时间戳（格式 `%Y%m%d%H%M%S`，如 `20260422153012`）。
+
 ```
 docker run -d \
   <docker_options> \
-  --name h200-lang-op-$1 \
-  <-v volume1> <-v volume2> ... \
-  -w <work_dir> \
+  --name h200-nlp-op-$1-<TIMESTAMP> \
+  -v <SKILL_DIR>/workspace:/workspace \
+  -w /workspace \
   <image_name> \
   sleep infinity
 ```
 
+其中 `<SKILL_DIR>` 为本 skill 所在目录的绝对路径。
+
 具体规则：
 1. 固定前缀 `docker run -d`
 2. 拼接 `docker_options`
-3. 追加 `--name h200-lang-op-$1` 作为容器名
-4. 遍历 `volumes` 数组，每项加 `-v` 前缀
-5. 追加 `-w <work_dir>`
+3. 追加 `--name h200-nlp-op-$1-<TIMESTAMP>` 作为容器名
+4. 挂载 `-v <SKILL_DIR>/workspace:/workspace`
+5. 追加 `-w /workspace`
 6. 追加 `image_name`
 7. 追加 `sleep infinity` 保持容器运行
 
@@ -53,37 +58,67 @@ docker run -d \
 - 执行后通过 `docker ps` 确认容器处于 running 状态
 - **若失败**: 将失败命令和错误输出交给 evaluator 诊断，根据返回的 adjusted_command 和 is_recoverable 决定是否重试，最多重试 3 次
 
+
 ## 第四步: 生成评测脚本
 
-在容器**外部**（宿主机），读取 `scripts/run_test.sh.tpl` 模板，进行变量替换生成最终脚本 `run_test.sh`：
+在容器**外部**（宿主机），读取 `scripts/run_test.sh.tpl` 模板，进行变量替换生成评测脚本。
+
+脚本命名格式为 `run_test_v<N>.sh`，其中 `<N>` 为版本号，从 1 开始递增。每次生成新脚本时版本号 +1（如 `run_test_v1.sh`、`run_test_v2.sh`），便于在脚本需要调整时保留历史版本。
 
 替换规则：
 - `{{CARD_COUNT}}` → 实际卡数 $0
 - `{{TEST_CASE}}` → 实际测试用例 $1
-- `{{TASK_COMMAND}}` → 配置中的 task_command
-- `{{WORK_DIR}}` → 配置中的 work_dir
 
 生成的脚本必须包含 `set -e` 以确保失败即退出。
 
 ## 第五步: 上传脚本到容器
 
 ```
-docker cp run_test.sh <container>:<work_dir>/run_test.sh
-docker exec <container> chmod +x <work_dir>/run_test.sh
+docker cp run_test_v<N>.sh <container>:/workspace/run_test_v<N>.sh
+docker exec <container> chmod +x /workspace/run_test_v<N>.sh
 ```
 
 ## 第六步: 在容器内执行评测
 
 ```
-docker exec <container> bash <work_dir>/run_test.sh
+docker exec <container> bash /workspace/run_test_v<N>.sh
 ```
 
 - 捕获标准输出和标准错误作为评测结果
 - **若失败**: 将失败命令、错误输出、上下文信息交给 evaluator 诊断，根据返回结果决定是否重试或调整脚本，最多重试 3 次
 
+## 各测试用例的评测命令
+
+以下为各 test_case 对应的具体评测命令，在生成 `run_test.sh` 时写入脚本：
+
+### gemm
+
+```bash
+# 1. 进入 CUDA 算子源码目录
+cd speed_test/cuda_ops
+
+# 2. 创建并清理构建目录
+mkdir -p build
+cd build
+rm -rf *
+
+# 3. CMake 配置
+cmake \
+  -DCUDNN_INCLUDE_DIR=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/include \
+  -DCUDNN_LIBRARIES=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn.so.9 \
+  ..
+
+# 4. 编译
+make
+
+# 5. 回到 workspace 根目录执行测试
+cd /workspace
+python test_gemm.py gemm_f16.csv 16 0
+```
+
 ## 失败处理协议
 
-当第三步或第六步执行失败时:
+当第三步或第七步执行失败时:
 
 1. 收集: 失败命令、完整错误输出、当前步骤上下文
 2. 发送给 evaluator
