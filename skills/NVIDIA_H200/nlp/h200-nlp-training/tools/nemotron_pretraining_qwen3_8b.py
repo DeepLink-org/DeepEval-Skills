@@ -37,11 +37,11 @@ def configure_recipe(nodes: int = 1, gpus_per_node: int = 8):
     data_bak = recipe.data
     recipe.data=run.Config(
             PreTrainingDataModule,
-            paths="./datasets_precessed/qwen3_8b/arxiv_sample_text_document",
+            paths="/workspace/tmp/datasets_precessed/qwen3_8b/arxiv_sample_text_document",
             seq_length=8192,
             micro_batch_size=data_bak.micro_batch_size,
             global_batch_size=data_bak.global_batch_size,
-            tokenizer=run.Config(AutoTokenizer, "./Qwen3-8B/snapshots/9c925d64d72725edaf899c6cb9c377fd0709d9c5"),
+            tokenizer=run.Config(AutoTokenizer, "/data/models/Qwen3-8B/snapshots/9c925d64d72725edaf899c6cb9c377fd0709d9c5"),
             split='900,50,50',
             seed=2025,
     )
