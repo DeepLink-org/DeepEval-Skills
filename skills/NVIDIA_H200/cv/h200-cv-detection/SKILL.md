@@ -189,13 +189,24 @@ MASTER_PORT
 
 ### 性能监控
 
-**关键指标**：
-- 平均迭代耗时（`AVG_ITER_TIME`）
-- 数据加载耗时（`DATA`）
-- 算子执行耗时（`OP`）
-- GPU 利用率
-- 显存占用
-- 不同模型在 FP32/FP16 下的吞吐差异
+训练完成后，从日志文件中读取 `AVG_ITER_TIME` 作为关键性能指标。
+
+**日志路径**：
+```
+./models/onedl-mmdetection/work_dirs/<MODEL_NAME>_gpus<NGPU>_<PRECISION>/<TIMESTAMP>/<TIMESTAMP>.log
+```
+
+**日志格式示例**：
+```
+2026/03/18 11:09:16 - mmengine - INFO - === AVG_ITER_TIME: 0.0951s | DATA: 0.0036s | OP: 0.0915s ===
+```
+
+**提取方式**：使用以下命令从日志中提取 AVG_ITER_TIME：
+```bash
+grep "AVG_ITER_TIME" <LOG_PATH> | tail -1 | grep -oP "AVG_ITER_TIME: \K[0-9.]+"
+```
+
+该值即为模型训练的平均每次迭代耗时（秒），数值越小性能越好。
 
 ---
 
@@ -220,4 +231,4 @@ MASTER_PORT
    - 检查是否关闭默认 timer hook 避免冲突
 
 5. **数据集报错或找不到数据**
-   - 检查 COCO 数据目录或软链接是否按 `mmdetection` 要求准备完成
+   - 检查 COCO2017 数据目录或软链接是否按 `mmdetection` 要求准备完成
