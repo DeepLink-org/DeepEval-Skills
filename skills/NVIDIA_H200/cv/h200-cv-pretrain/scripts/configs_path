@@ -1,0 +1,8 @@
+configs/resnet/resnet50_8xb32_in1k.py
+configs/inception_v3/inception-v3_8xb32_in1k.py
+configs/seresnet/seresnet50_8xb32_in1k.py
+configs/mobilenet_v2/mobilenet-v2_8xb32_in1k.py
+configs/shufflenet_v2/shufflenet-v2-1x_16xb64_in1k.py
+configs/densenet/densenet121_4xb256_in1k.py
+configs/swin_transformer/swin-large_16xb64_in1k.py
+configs/efficientnet/efficientnet-b2_8xb32_in1k.py
