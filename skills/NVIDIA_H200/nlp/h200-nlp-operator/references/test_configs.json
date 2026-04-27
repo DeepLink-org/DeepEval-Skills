@@ -1,7 +1,0 @@
-{
-  "gemm": {
-    "image_name": "registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:operate",
-    "docker_options": "--gpus all --shm-size=10g",
-    "hints": ""
-  }
-}
