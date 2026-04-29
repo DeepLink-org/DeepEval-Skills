@@ -25,8 +25,8 @@ AIBenchAgent-skills 是一个专为人工智能软硬件验证平台设计的评
 | 视觉场景 | 检测训练 | NVIDIA | [nvidia-cv-detection](skills/NVIDIA/cv/nvidia-cv-detection) ✅ | 计划实现目标检测模型（如YOLO、Faster R-CNN）训练性能评测，包括数据增强、损失计算、后处理等环节。 |
 | 视觉场景 | 分类训练 | NVIDIA | [nvidia-cv-pretrain](skills/NVIDIA/cv/nvidia-cv-pretrain) ✅ | 计划实现图像分类模型（如ResNet、Vision Transformer）训练性能评测，涵盖图像预处理、模型前向/反向传播等。 |
 | 视觉场景 | 分割训练 | NVIDIA | [nvidia-cv-segmentation](skills/NVIDIA/cv/nvidia-cv-segmentation) ✅ | 计划实现图像分割模型（如U-Net、DeepLab）训练性能评测，包括像素级标注、分割掩码生成等任务。 |
-| 多模态场景 | 文生图推理 | NVIDIA | ⏳ 敬请期待 | 计划实现文本到图像生成模型（如Stable Diffusion、DALL-E）推理性能评测，包括提示词编码、扩散过程、图像解码等阶段。 |
-| 多模态场景 | 文生视频推理 | NVIDIA | ⏳ 敬请期待 | 计划实现文本到视频生成模型推理性能评测，涵盖时序建模、帧间一致性、视频质量评估等指标。 |
+| 多模态场景 | 文生图推理 | NVIDIA | [nvidia-mm-t2i](skills/NVIDIA/mm/nvidia-mm-t2i) ✅ | 计划实现文本到图像生成模型（如Stable Diffusion、DALL-E）推理性能评测，包括提示词编码、扩散过程、图像解码等阶段。 |
+| 多模态场景 | 文生视频推理 | NVIDIA | [nvidia-mm-t2v](skills/NVIDIA/mm/nvidia-mm-t2v) ✅ | 计划实现文本到视频生成模型推理性能评测，涵盖时序建模、帧间一致性、视频质量评估等指标。 |
 | 渲染仿真场景 | 仿真 | NVIDIA | ⏳ 敬请期待 | 计划实现渲染仿真任务性能评测，包括光线追踪、物理仿真、实时渲染等场景。 |
 | （待补充） | （待补充） | （其他芯片） | ⏳ 敬请期待 | 更多芯片支持规划中，包括但不限于国产AI芯片、其他品牌GPU等。技能将根据不同芯片架构进行适配优化。 |
 
