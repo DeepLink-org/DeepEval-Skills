@@ -19,7 +19,7 @@ AIBenchAgent-skills 是一个专为人工智能软硬件验证平台设计的评
 | 场景 | 子场景 | 芯片 | Skills | 说明 |
 |------|--------|------|------|------|
 | 语言场景 | 训练 | NVIDIA_H200 | [h200-nlp-training](skills/NVIDIA_H200/nlp/h200-nlp-training) ✅ | 支持大规模语言模型预训练，包括模型初始化、数据加载、分布式训练、梯度同步等全流程性能评测。 |
-| 语言场景 | 微调 | NVIDIA_H200 | ⏳ 敬请期待 | 计划实现语言模型指令微调、领域适配等任务的性能评测，涵盖LoRA、QLoRA等高效微调技术。 |
+| 语言场景 | 微调 | NVIDIA_H200 | [h200-nlp-finetune](skills/NVIDIA_H200/nlp/h200-nlp-finetune)✅ | 计划实现语言模型指令微调、领域适配等任务的性能评测，涵盖LoRA、QLoRA等高效微调技术。 |
 | 语言场景 | 推理 | NVIDIA_H200 | [h200-nlp-inference](skills/NVIDIA_H200/nlp/h200-nlp-inference) ✅ | 计划实现语言模型在线推理性能评测，包括吞吐量、延迟、显存占用等关键指标。 |
 | 语言场景 | 算子 | NVIDIA_H200 | [h200-nlp-operator](skills/NVIDIA_H200/nlp/h200-nlp-operator) ✅ | 提供常见NLP基础算子（GEMM、Attention、FFN、LayerNorm等）性能测试，支持不同精度、批量大小、序列长度的组合测试。 |
 | 视觉场景 | 检测训练 | NVIDIA_H200 | [h200-cv-detection](skills/NVIDIA_H200/cv/h200-cv-detection) ✅ | 计划实现目标检测模型（如YOLO、Faster R-CNN）训练性能评测，包括数据增强、损失计算、后处理等环节。 |
