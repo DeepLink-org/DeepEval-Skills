@@ -1,12 +1,12 @@
 ---
-name: h200-nlp-training
-description: "H200芯片-语言场景-训练任务的评测流程。用于指导executor完成docker容器启动、脚本生成、上传和执行的完整评测链路。"
+name: nvidia-nlp-training
+description: "nvidia 芯片-语言场景-训练任务的评测流程。用于指导executor完成docker容器启动、脚本生成、上传和执行的完整评测链路。"
 ---
 
 ## 触发条件
 
 当用户说以下任意内容时启动：
-- "我要在 H200 上训练 Qwen3 8B 模型"
+- "我要在 nvidia 上训练 Qwen3 8B 模型"
 - "Qwen3 8B 模型预训练"
 
 ---
@@ -17,7 +17,7 @@ description: "H200芯片-语言场景-训练任务的评测流程。用于指导
 - **8B**: Qwen3-8B，8卡训练，global_batch_size=128，seq_length=8192
 
 **硬件要求**：
-- 8张 NVIDIA H200 GPU 
+- 8张 NVIDIA GPU 
 - 100GB 共享内存
 - 数据盘：至少 1TB NVMe SSD
 
