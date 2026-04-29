@@ -1,131 +1,136 @@
 ---
-name: h200-nlp-operator
-description: H200芯片-语言场景-算子任务的评测流程。用于指导executor完成docker容器启动、脚本生成、上传和执行的完整评测链路。参数：$0=卡数，$1=测试用例名称（如gemm、Conv2d等）。
+name: cuda-ops-perf-test
+description: "CUDA算子基准值生成，包括GEMM、Conv2d算子(FP16/FP32)和长尾算子。用于指导executor完成docker容器启动、编译和基准值生成的完整流程。"
+argument-hint: [test-type] (gemm|conv|longtail)
 ---
 
-# H200 语言场景 算子评测
+# CUDA 算子基准值生成
 
-芯片: H200 | 场景: nlp | 任务类型: 算子
-卡数: $0 | 测试用例: $1
+## 触发条件
 
-## 第一步: 加载评测配置
+当用户说以下任意内容时启动：
+- "帮我生成 GEMM 算子基准值"
+- "跑一下 Conv2d 算子基准"
+- "生成 CUDA 算子 baseline"
+- "帮我跑长尾算子基准测试"
 
-读取 `references/test_configs.json`，根据参数定位配置：
+---
 
-1. 查找 key `"$1"`（test_case），将 card_count=$0 作为运行时参数传入
-2. 若不存在，终止评测并报告：未找到 test_case=$1 的配置
+### 支持的算子配置
 
-从匹配的配置中获取以下字段：
-- `image_name`: Docker 镜像名
-- `docker_options`: docker run 附加参数（如 --gpus、--shm-size 等）
-- `hints`: 补充说明（可选，仅当有无法结构化的额外信息时填写）
+**当前支持算子**：
+- **GEMM**: 矩阵乘法算子，支持 FP16（使用 tensor core）和 FP32
+- **Conv2d**: 二维卷积算子，支持 FP16 和 FP32
+- **长尾算子**: 基于 LongTail-Bench 的 Pytorch 实现，支持 GPU 和 CPU
 
-以下字段为固定约定，不从配置中读取：
-- **volumes**: 将本 skill 目录下的 `workspace` 映射到容器的 `/workspace`
-- **work_dir**: 固定为 `/workspace`
 
-## 第二步: 生成 docker run 命令
+---
 
-根据配置字段直接拼接完整的 docker run 命令：
+### 启动配置
 
-容器名格式为 `h200-nlp-op-$1-<TIMESTAMP>`，其中 `<TIMESTAMP>` 为当前时间戳（格式 `%Y%m%d%H%M%S`，如 `20260422153012`）。
-
-```
-docker run -d \
-  <docker_options> \
-  --name h200-nlp-op-$1-<TIMESTAMP> \
-  -v <SKILL_DIR>/workspace:/workspace \
+**Docker 运行命令**：
+```bash
+docker run -dit \
+  --name cuda-ops-test \
+  --gpus all \
+  --shm-size=16g \
+  -v /workspace/results:/workspace/results \
+  -v /workspace/logs:/workspace/logs \
   -w /workspace \
-  <image_name> \
-  sleep infinity
+  pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel \
+  bash
 ```
 
-其中 `<SKILL_DIR>` 为本 skill 所在目录的绝对路径。
-
-具体规则：
-1. 固定前缀 `docker run -d`
-2. 拼接 `docker_options`
-3. 追加 `--name h200-nlp-op-$1-<TIMESTAMP>` 作为容器名
-4. 挂载 `-v <SKILL_DIR>/workspace:/workspace`
-5. 追加 `-w /workspace`
-6. 追加 `image_name`
-7. 追加 `sleep infinity` 保持容器运行
-
-## 第三步: 启动容器
-
-执行第二步生成的 docker run 命令。
-
-- 执行后通过 `docker ps` 确认容器处于 running 状态
-- **若失败**: 将失败命令和错误输出交给 evaluator 诊断，根据返回的 adjusted_command 和 is_recoverable 决定是否重试，最多重试 3 次
-
-
-## 第四步: 生成评测脚本
-
-在容器**外部**（宿主机），读取 `scripts/run_test.sh.tpl` 模板，进行变量替换生成评测脚本。
-
-脚本命名格式为 `run_test_v<N>.sh`，其中 `<N>` 为版本号，从 1 开始递增。每次生成新脚本时版本号 +1（如 `run_test_v1.sh`、`run_test_v2.sh`），便于在脚本需要调整时保留历史版本。
-
-替换规则：
-- `{{CARD_COUNT}}` → 实际卡数 $0
-- `{{TEST_CASE}}` → 实际测试用例 $1
-
-生成的脚本必须包含 `set -e` 以确保失败即退出。
-
-## 第五步: 上传脚本到容器
-
-```
-docker cp run_test_v<N>.sh <container>:/workspace/run_test_v<N>.sh
-docker exec <container> chmod +x /workspace/run_test_v<N>.sh
+后续所有命令均在容器内执行：
+```bash
+docker exec -it cuda-ops-test bash
 ```
 
-## 第六步: 在容器内执行评测
+---
 
-```
-docker exec <container> bash /workspace/run_test_v<N>.sh
-```
+## GEMM、Conv2d 算子
 
-- 捕获标准输出和标准错误作为评测结果
-- **若失败**: 将失败命令、错误输出、上下文信息交给 evaluator 诊断，根据返回结果决定是否重试或调整脚本，最多重试 3 次
-
-## 各测试用例的评测命令
-
-以下为各 test_case 对应的具体评测命令，在生成 `run_test.sh` 时写入脚本：
-
-### gemm
+### 编译
 
 ```bash
-# 1. 进入 CUDA 算子源码目录
-cd speed_test/cuda_ops
-
-# 2. 创建并清理构建目录
-mkdir -p build
-cd build
-rm -rf *
-
-# 3. CMake 配置
-cmake \
-  -DCUDNN_INCLUDE_DIR=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/include \
-  -DCUDNN_LIBRARIES=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib/libcudnn.so.9 \
-  ..
-
-# 4. 编译
-make
-
-# 5. 回到 workspace 根目录执行测试
-cd /workspace
-python test_gemm.py gemm_f16.csv 16 0
+cd cuda_ops
+mkdir -p build && cd build && cmake .. && make
 ```
 
-## 失败处理协议
+### 生成基准值
 
-当第三步或第七步执行失败时:
+**单独运行**：
+```bash
+cd cuda_ops
+./build/gemm m k n trans1 trans2 datatype
+./build/conv n c h w c_out k_w k_h pad_w pad_h stride_w stride_h datatype
+```
 
-1. 收集: 失败命令、完整错误输出、当前步骤上下文
-2. 发送给 evaluator
-3. evaluator 返回:
-   - `analysis`: 原因分析
-   - `adjusted_command`: 建议调整后的命令
-   - `is_recoverable`: 是否可恢复
-   - `suggestion`: 简短建议
-4. 若 `is_recoverable=true`，使用 adjusted_command 重试，最多 3 次
-5. 若 `is_recoverable=false` 或重试耗尽，终止评测并报告失败原因
+参数说明：
+- `datatype`: `16` 表示 FP16，`32` 表示 FP32
+- `trans1`、`trans2`: `0` 表示不转置，`1` 表示转置
+
+**批量运行**：
+```bash
+python test_conv.py /workspace/results/conv_f16.csv 16 0
+python test_conv.py /workspace/results/conv_f32.csv 32 0
+python test_gemm.py /workspace/results/gemm_f16.csv 16 0
+python test_gemm.py /workspace/results/gemm_f32.csv 32 0
+```
+
+从 `*.csv` 文件读取参数并写入基准值，`16/32` 表示数据类型，`0` 表示生成基准值。如已有基准值则跳过。
+
+**结果输出**：
+基准值写入 `/workspace/results/` 下对应的 `*.csv` 文件的 `baseline` 列中，例如 `gemm_f16.csv` 存放 GEMM 算子在 FP16 下的基准值，`conv_f32.csv` 存放 Conv2d 算子在 FP32 下的基准值。
+
+---
+
+## 长尾算子
+
+### 环境准备
+
+```bash
+cd LongTail-Bench
+export PYTHONPATH=$PWD:$PYTHONPATH
+```
+
+### 生成基准值
+
+**GPU 基准**：
+```bash
+python ./long_tail_bench/api/api.py -f ../longtail_perf.csv --outcsv /workspace/results/ltout_gpu.csv
+```
+
+**CPU 基准**：
+```bash
+# 执行转化脚本（生成 samples-bak 备份，新 samples 仅支持 cpu）
+sh script_for_cpu.sh
+
+# 生成基准
+DEVICE_CPU=1 python ./long_tail_bench/api/api.py -f ../longtail_perf.csv --outcsv /workspace/results/ltout_cpu.csv
+```
+
+如需恢复 GPU 测试，将 `samples-bak` 还原为 `samples`。
+
+**结果输出**：
+基准值写入 `/workspace/results/` 下 `--outcsv` 指定的 `*.csv` 文件中，例如 `ltout_gpu.csv` 存放 GPU 基准值，`ltout_cpu.csv` 存放 CPU 基准值。
+
+---
+
+### 常见问题
+
+1. **编译失败**
+   - 检查 cuDNN 9 是否正确安装
+   - 检查 CMake 和 CUDA 工具链版本
+
+2. **容器启动失败**
+   - 检查 Docker 镜像 `pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel` 是否已拉取
+   - 检查 GPU 驱动和 `--gpus all` 是否可用
+
+3. **基准值生成异常**
+   - 检查 `*.csv` 文件是否存在且格式正确
+   - 检查 GPU 显存是否充足
+
+4. **长尾算子 CPU 模式失败**
+   - 确认已执行 `script_for_cpu.sh` 转化脚本
+   - 确认 `PYTHONPATH` 已正确设置
