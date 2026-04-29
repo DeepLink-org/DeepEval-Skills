@@ -1,12 +1,12 @@
 ---
-name: h200-nlp-finetune
-description: NVIDIA H200 GPU 上语言模型微调任务的评测技能。用于指导 executor 完成容器启动、微调脚本执行、训练日志采集与性能/质量指标分析。
+name: nvidia-nlp-finetune
+description: NVIDIA GPU 上语言模型微调任务的评测技能。用于指导 executor 完成容器启动、微调脚本执行、训练日志采集与性能/质量指标分析。
 ---
 
 ## 触发条件
 
 当用户说以下任意内容时启动：
-- "我要在 H200 上跑语言模型微调"
+- "我要在 nvidia 上跑语言模型微调"
 - "帮我测试 LoRA 微调性能"
 - "我要跑 Alpaca-LoRA 微调"
 - "用 LLaMA-7B 跑 alpaca-lora finetune"
@@ -32,7 +32,7 @@ description: NVIDIA H200 GPU 上语言模型微调任务的评测技能。用于
 - **Alpaca-LoRA 微调**：使用挂载代码仓库中的 `finetune.sh`
 
 **硬件要求**：
-- NVIDIA H200 GPU
+- NVIDIA GPU
 - 足够显存支撑 LLaMA-7B + LoRA 训练 (`batch_size=128`, `cutoff_len=512`)
 
 ---
