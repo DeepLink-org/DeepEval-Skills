@@ -12,7 +12,7 @@ export PYTHONPATH=$MMSEG_PATH:$MMCV_PATH:$SYSTEM_PACKAGES:$PYTHONPATH
 
 export NCCL_NVLS_ENABLE=0
 
-NGPU=16
+NGPU=8
 WEIGHT_PATH=./models/weight/resnet50_v1c-2cccc1ad.pth
 mkdir -p work_dirs
 
@@ -42,7 +42,7 @@ for entry in "${MODELS[@]}"; do
 
         echo ""
         echo "============================================================"
-        echo "  [${COUNT}/${TOTAL}] ${MODEL_NAME} - ${PRECISION} - ${NGPU} GPUs (2 nodes)"
+        echo "  [${COUNT}/${TOTAL}] ${MODEL_NAME} - ${PRECISION} - ${NGPU} GPUs (1 nodes)"
         echo "============================================================"
 
         $PYTHON -m torch.distributed.launch \

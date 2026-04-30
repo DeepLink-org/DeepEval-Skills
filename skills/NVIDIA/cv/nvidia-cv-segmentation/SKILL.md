@@ -1,6 +1,6 @@
 ---
 name: nvidia-cv-segmentation
-description: "nvidia芯片-CV场景-分割任务的评测流程。用于指导executor在 nvidia 环境下完成 onedl-mmsegmentation 分割模型训练环境准备、批量脚本执行、性能采集和结果分析。适用于 deeplabv3、fcn、pspnet、apcnet 等模型。"
+description: NVIDIA GPU 上 CV 分割模型训练性能评测技能。基于 onedl-mmsegmentation，用于指导 executor 完成容器启动、批量分割训练脚本执行、日志采集与性能指标分析。适用于 deeplabv3、fcn、pspnet、apcnet 等模型。
 ---
 
 ## 触发条件
@@ -10,208 +10,174 @@ description: "nvidia芯片-CV场景-分割任务的评测流程。用于指导ex
 - "帮我测试 deeplabv3 / fcn / pspnet / apcnet 分割训练性能"
 - "在 nvidia 上跑 mmsegmentation 分割模型 benchmark"
 - "帮我批量测试 CV segmentation 模型 FP32/FP16 性能"
+- "采集 segmentation 模型 AVG_ITER_TIME"
+
+---
+
+**基础目录配置**：
+- 模型权重目录：`/data/models`
+- 数据集目录：`/data/datasets`
+- 代码挂载目录：`/workspace/code`
+- 训练日志输出目录：`/workspace/logs`
 
 ---
 
 ### 支持的模型配置
 
-**当前支持模型**：
+**当前支持模型**（共 4 个）：
 - `deeplabv3`
 - `fcn`
 - `pspnet`
 - `apcnet`
 
 **当前支持任务**：
-- 基于 `onedl-mmsegmentation` 的分割模型训练/性能测试
+- 基于 `onedl-mmsegmentation` 的分割模型训练性能测试
+- 每个模型分别测试 FP32 和 FP16 精度
 - 使用 `custom_iter_timer_hook.py` 采集训练迭代耗时
-- 批量执行多模型基准测试（FP32 / FP16）
 
 **硬件要求**：
-- 2 节点，共 16 张 NVIDIA GPU
-- 当前脚本默认每节点 8 卡
-- 适合 PyTorch 2.x + CUDA 11.8+/12.x 环境
+- 1 节点，8 张 NVIDIA GPU
 
 ---
 
-### 代码与环境要求
+### 依赖要求
 
-该 skill 基于 PyTorch 2.x 适配方案，分割模型使用 `onedl-mmsegmentation`，需提前安装 `onedl-mmcv` 与 `onedl-mmsegmentation`。
-
-#### 1. 安装 onedl-mmcv
+依赖通过指定 Docker 镜像提供，不需要在宿主机额外安装：
 
 ```bash
-git clone https://github.com/VBTI-development/onedl-mmcv.git
-cd onedl-mmcv
-git checkout 55264919c4651084882c2ba6f888834aee9a4627
-
-export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0;9.0a"
-export MMCV_WITH_OPS=1
-export FORCE_CUDA=1
-python -m pip install -e . -v --no-build-isolation
-cd ..
+registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_all
 ```
 
-#### 2. 安装 onedl-mmsegmentation
-
-```bash
-git clone https://github.com/VBTI-development/onedl-mmsegmentation.git
-cd onedl-mmsegmentation
-git checkout f2dc1d0758593eaec3b257ed185fea35c86e6d26
-pip install -e .
-cd ..
-```
-
-#### 3. 设置环境变量
-```bash
-export MMSEG_PATH=/path/to/onedl-mmsegmentation                                                                                                                                                          
-export MMCV_PATH=/path/to/onedl-mmcv                                                                                                                                                                     
-export PYTHONPATH=${MMSEG_PATH}:${MMCV_PATH}:$PYTHONPATH   
-```
+容器内已预装 PyTorch 2.7.0+cu128、TorchVision 0.22.0、MMEngine 0.10.9、onedl-mmcv、onedl-mmsegmentation 等。
 
 ---
 
-### 自定义性能统计 Hook
+### 模型与数据路径
 
-为了在 PyTorch 2.x / mmengine 环境下采集稳定的迭代耗时，需使用：
+当前脚本默认使用以下资源：
 
+**模型权重路径**：
 ```bash
-tools/custom_iter_timer_hook.py
+/data/models/weight/   # backbone 预训练权重目录
 ```
 
-**放置位置**：将 `custom_iter_timer_hook.py` 拷贝到 `onedl-mmsegmentation/` 根目录下，确保 Python 可导入。
-
-其作用：
-- 在指定迭代区间内统计平均迭代时间
-- 分离 `data_time` 与 `op_time`
-- 到达设定结束迭代后主动退出，便于 benchmark 自动化
-
-通常需要在配置文件中加入：
-
-```python
-custom_imports = dict(imports=['custom_iter_timer_hook'], allow_failed_imports=False)
-custom_hooks = [dict(type='CustomIterTimerHook', begin_iter=200, end_iter=500)]
-default_hooks = dict(timer=None, checkpoint=None)
-```
-
----
-### 模型与权重要求
-
-当前批量检测脚本会为不同模型自动注入 backbone 初始化权重，权重目录默认位于：
-
-```bash
-./models/weight
-```
-
-当前脚本依赖以下权重文件：
+依赖以下权重文件：
 - `resnet50_v1c-2cccc1ad.pth`
 
-如果权重不存在，相关检测模型会启动失败。
-
----
-### 配置文件列表
-
-分割模型配置列表位于：
-
+**数据集路径**：
 ```bash
-scripts/configs_path
+/data/datasets/cityscapes/   # Cityscapes 数据集
 ```
 
-当前包含：
-- `configs/deeplabv3/deeplabv3_r50-d8_4xb2-40k_cityscapes-512x1024.py`
-- `configs/fcn/fcn_r50-d8_4xb2-40k_cityscapes-512x1024.py`
-- `configs/pspnet/pspnet_r50-d8_4xb2-40k_cityscapes-512x1024.py`
-- `configs/apcnet/apcnet_r50-d8_4xb2-40k_cityscapes-512x1024.py`
+如模型权重或数据集路径发生变化，应同步修改 `batch_segmentation.sh` 中的相关路径。
+
+**自定义 Hook**：
+- `custom_iter_timer_hook.py` 位于 skill 目录下的 `tools/custom_iter_timer_hook.py`，部署时拷贝到 `onedl-mmsegmentation/` 根目录：
+  ```bash
+  cp tools/custom_iter_timer_hook.py /workspace/code/onedl-mmsegmentation/
+  ```
+- 用于在指定迭代区间（begin_iter=200, end_iter=500）统计平均迭代耗时。
 
 ---
 
-### 批量测试脚本
+### 容器启动脚本
 
-标准批量测试脚本位置：
+**Docker 运行命令**：
+```bash
+docker run -it \
+  --name mmseg_benchmark \
+  --gpus all \
+  --shm-size=128g \
+  -v /data/models:/data/models \
+  -v /data/datasets:/data/datasets \
+  -v /workspace/code:/workspace/code \
+  -v /workspace/logs:/workspace/logs \
+  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_all \
+  bash
+```
+
+说明：
+- 使用 **交互式** `-it` 进入 `bash`，便于在同一终端内执行训练脚本；如需后台常驻可改为 `-d` 并配合 `docker exec`。
+- **`--shm-size=128g`**：避免大 batch 数据加载时共享内存不足。
+- 若已存在同名容器，需先执行 `docker rm -f mmseg_benchmark` 或更换 `--name`。
+
+---
+
+### 训练脚本
+
+批量测试脚本位于 skill 目录下的 `scripts/batch_segmentation.sh`，部署时拷贝到代码挂载目录：
 
 ```bash
-scripts/batch_segmentation.sh
+cp scripts/batch_segmentation.sh /workspace/code/
 ```
 
 执行方式：
 
 ```bash
-bash scripts/batch_segmentation.sh
+cd /workspace/code/onedl-mmsegmentation
+bash ../batch_segmentation.sh 2>&1 | tee /workspace/logs/segmentation.log
 ```
 
 当前脚本默认行为：
-- 进入 `./models/onedl-mmsegmentation`
-- 设置 `MMSEG_PATH`、`MMCV_PATH`、`PYTHONPATH`
-- 设置 `WEIGHT_DIR=./models/weight`
-- 使用 `torch.distributed.launch` 进行 2 节点 16 卡训练
-- 默认每节点 8 卡
-- 当前脚本默认跑 `fp32`，每个模型分别测试 `fp32` 和 `fp16`
-- 所有模型共用 ResNetV1c-50 backbone 权重：`./models/weight/resnet50_v1c-2cccc1ad.pth`
-- 输出目录位于 `work_dirs/${MODEL_NAME}_gpus${NGPU}_${PRECISION}`
-- 通过 `--cfg-options` 动态切换 `optim_wrapper.type=AmpOptimWrapper` 或 `OptimWrapper`
-
-涉及关键变量：
-
-```bash
-NODE_COUNT
-NODE_RANK
-MASTER_ADDR
-MASTER_PORT
-```
-
-执行前应确保这些分布式变量已正确设置。
+- 自动遍历 4 个分割模型
+- 每个模型分别执行 FP32 和 FP16 两轮测试
+- 8 卡分布式训练（`torch.distributed.launch --nproc_per_node=8`） 
+- 通过 `--cfg-options` 动态切换 `optim_wrapper.type=AmpOptimWrapper`（FP16）或 `OptimWrapper`（FP32）
+- 所有模型共用 ResNetV1c-50 backbone 权重
+- 输出目录位于 `work_dirs/${MODEL_NAME}_gpus8_${PRECISION}`
+- **不要修改** `begin_iter` (=200) / `end_iter` (=500) 等 CustomIterTimerHook 参数，否则与基线指标不可比
 
 ---
 
-### 数据集要求
+### 关键性能指标
 
-分割模型通常依赖 Cityscapes 数据集。
+训练日志中包含 `CustomIterTimerHook` 输出的迭代耗时汇总行，例如：
 
-需要按照 `onedl-mmsegmentation` 的数据集要求准备数据，并保证仓库内存在正确的数据目录或软链接。可参考 README 中 OpenMMLab 数据准备方式。
-
-如果数据路径未正确配置，训练脚本会直接报错。
-
----
-
-### 性能监控
-
-训练完成后，从日志文件中读取 `AVG_ITER_TIME` 作为关键性能指标。
-
-**日志路径**：
-```
-./models/onedl-mmsegmentation/work_dirs/<MODEL_NAME>_gpus<NGPU>_<PRECISION>/<TIMESTAMP>/<TIMESTAMP>.log
+```text
+2026/03/18 11:55:31 - mmengine - INFO - === AVG_ITER_TIME: 0.1032s | DATA: 0.0067s | OP: 0.0965s ===
 ```
 
-**日志格式示例**：
-```
-2026/03/18 11:09:16 - mmengine - INFO - === AVG_ITER_TIME: 0.0951s | DATA: 0.0036s | OP: 0.0915s ===
-```
+关注以下指标：
 
-**提取方式**：使用以下命令从日志中提取 AVG_ITER_TIME：
+| 类型 | 指标 | 说明 |
+|---|---|---|
+| 性能（必采） | `AVG_ITER_TIME` | 平均迭代耗时（秒），核心吞吐指标 |
+| 性能（辅助） | `DATA` | 数据加载耗时 |
+| 性能（辅助） | `OP` | 纯算子计算耗时 |
+
+**采集命令**（将 `LOG` 替换为实际日志路径，如 `/workspace/logs/segmentation.log`）：
+
 ```bash
-grep "AVG_ITER_TIME" <LOG_PATH> | tail -1 | grep -oP "AVG_ITER_TIME: \K[0-9.]+"
+# 核心：AVG_ITER_TIME
+grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "AVG_ITER_TIME: \K[0-9.]+"
+
+# 辅助：分别提取 DATA 和 OP
+grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "DATA: \K[0-9.]+"
+grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "OP: \K[0-9.]+"
 ```
 
-该值即为模型训练的平均每次迭代耗时（秒），数值越小性能越好。
 ---
 
 ### 常见问题
 
-1. **脚本启动失败**
-   - 检查 `onedl-mmsegmentation` 和 `onedl-mmcv` 是否已正确安装
-   - 检查 `PYTHONPATH` 是否包含对应仓库路径
+1. **容器名已存在**
+   - 执行 `docker rm -f mmseg_benchmark` 后重试，或改用新容器名。
 
-2. **分布式训练无法建立连接**
-   - 检查 `NODE_COUNT`、`NODE_RANK`、`MASTER_ADDR`、`MASTER_PORT` 是否正确
-   - 检查节点间网络互通和 NCCL 环境
+2. **找不到 `batch_segmentation.sh`**
+   - 检查 `/workspace/code` 挂载是否包含该脚本。
 
-3. **配置文件导入失败**
-   - 检查配置路径是否与 `scripts/configs_path` 一致
-   - 检查 `custom_iter_timer_hook.py` 是否已放置到 `onedl-mmsegmentation/` 可导入位置
+3. **预训练权重加载失败**
+   - 检查 `/data/models/weight/resnet50_v1c-2cccc1ad.pth` 是否存在。
 
-4. **无法统计性能数据**
-   - 检查 config 中是否正确导入 `CustomIterTimerHook`
-   - 检查是否关闭默认 timer hook 避免冲突
+4. **数据集报错或找不到数据**
+   - 检查 `/data/datasets/cityscapes/` 是否包含 Cityscapes 数据集。
 
-5. **数据集报错或找不到数据**
-   - 检查数据 Cityscapes 目录或软链接是否按 `mmsegmentation` 要求准备完成
+5. **无法统计性能数据**
+   - 检查 `custom_iter_timer_hook.py` 是否已放置到 `onedl-mmsegmentation/` 根目录下。
+   - 检查配置文件中是否正确导入 `CustomIterTimerHook`。
 
+6. **共享内存不足**
+   - 已使用 `--shm-size=128g`；若仍报错，检查数据加载 `num_workers` 与 Docker `--shm-size`。
+
+7. **`grep -P` 不可用**
+   - 换用支持 Perl 正则的环境执行命令，或将日志行复制到本地用 `python -c` 解析。
