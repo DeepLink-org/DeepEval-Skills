@@ -1,14 +1,14 @@
 ---
-name: h200-cv-segmentation
-description: "H200芯片-CV场景-分割任务的评测流程。用于指导executor在 H200 环境下完成 onedl-mmsegmentation 分割模型训练环境准备、批量脚本执行、性能采集和结果分析。适用于 deeplabv3、fcn、pspnet、apcnet 等模型。"
+name: nvidia-cv-segmentation
+description: "nvidia芯片-CV场景-分割任务的评测流程。用于指导executor在 nvidia 环境下完成 onedl-mmsegmentation 分割模型训练环境准备、批量脚本执行、性能采集和结果分析。适用于 deeplabv3、fcn、pspnet、apcnet 等模型。"
 ---
 
 ## 触发条件
 
 当用户说以下任意内容时启动：
-- "我要在 H200 上跑 CV 分割模型测试"
+- "我要在 nvidia 上跑 CV 分割模型测试"
 - "帮我测试 deeplabv3 / fcn / pspnet / apcnet 分割训练性能"
-- "在 H200 上跑 mmsegmentation 分割模型 benchmark"
+- "在 nvidia 上跑 mmsegmentation 分割模型 benchmark"
 - "帮我批量测试 CV segmentation 模型 FP32/FP16 性能"
 
 ---
@@ -27,7 +27,7 @@ description: "H200芯片-CV场景-分割任务的评测流程。用于指导exec
 - 批量执行多模型基准测试（FP32 / FP16）
 
 **硬件要求**：
-- 2 节点，共 16 张 NVIDIA H200 GPU
+- 2 节点，共 16 张 NVIDIA GPU
 - 当前脚本默认每节点 8 卡
 - 适合 PyTorch 2.x + CUDA 11.8+/12.x 环境
 
