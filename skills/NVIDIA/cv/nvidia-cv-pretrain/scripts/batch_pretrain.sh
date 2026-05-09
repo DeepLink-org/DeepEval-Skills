@@ -1,28 +1,30 @@
 #!/bin/bash
-# 批量测试 segmentation 模型（在 rjob 内部运行）
+# 批量测试 pretrain 模型（在 rjob 内部运行）
 # 每个模型分别测试 FP32 和 FP16，2节点16卡
 
-cd ./models/onedl-mmsegmentation
+cd ./models/onedl-mmpretrain
 PYTHON=/usr/bin/python3
 
-export MMSEG_PATH=./models/onedl-mmsegmentation
+export MMPRE_PATH=./models/onedl-mmpretrain
 export MMCV_PATH=./models/onedl-mmcv
 export SYSTEM_PACKAGES=/usr/local/lib/python3.10/dist-packages
-export PYTHONPATH=$MMSEG_PATH:$MMCV_PATH:$SYSTEM_PACKAGES:$PYTHONPATH
+export PYTHONPATH=$MMPRE_PATH:$MMCV_PATH:$SYSTEM_PACKAGES:$PYTHONPATH
 
 export NCCL_NVLS_ENABLE=0
 
-NGPU=16
-WEIGHT_PATH=./models/weight/resnet50_v1c-2cccc1ad.pth
+NGPU=8
 mkdir -p work_dirs
 
 # 模型列表: "config_path model_name"
-# 4个模型全部使用 ResNetV1c-50 backbone，共用同一个权重
 MODELS=(
-    "configs/deeplabv3/deeplabv3_r50-d8_4xb2-40k_cityscapes-512x1024.py deeplabv3"
-    "configs/fcn/fcn_r50-d8_4xb2-40k_cityscapes-512x1024.py fcn"
-    "configs/pspnet/pspnet_r50-d8_4xb2-40k_cityscapes-512x1024.py pspnet"
-    "configs/apcnet/apcnet_r50-d8_4xb2-40k_cityscapes-512x1024.py apcnet"
+    "configs/resnet/resnet50_8xb32_in1k.py resnet50"
+    "configs/inception_v3/inception-v3_8xb32_in1k.py inception_v3"
+    "configs/seresnet/seresnet50_8xb32_in1k.py seresnet50"
+    "configs/mobilenet_v2/mobilenet-v2_8xb32_in1k.py mobilenet_v2"
+    "configs/shufflenet_v2/shufflenet-v2-1x_16xb64_in1k.py shufflenet_v2"
+    "configs/densenet/densenet121_4xb256_in1k.py densenet121"
+    "configs/swin_transformer/swin-large_16xb64_in1k.py swin_large"
+    "configs/efficientnet/efficientnet-b2_8xb32_in1k.py efficientnet_b2"
 )
 
 TOTAL=${#MODELS[@]}
@@ -42,7 +44,7 @@ for entry in "${MODELS[@]}"; do
 
         echo ""
         echo "============================================================"
-        echo "  [${COUNT}/${TOTAL}] ${MODEL_NAME} - ${PRECISION} - ${NGPU} GPUs (2 nodes)"
+        echo "  [${COUNT}/${TOTAL}] ${MODEL_NAME} - ${PRECISION} - ${NGPU} GPUs (1 nodes)"
         echo "============================================================"
 
         $PYTHON -m torch.distributed.launch \
@@ -55,9 +57,6 @@ for entry in "${MODELS[@]}"; do
             --launcher pytorch \
             --work-dir work_dirs/${MODEL_NAME}_gpus${NGPU}_${PRECISION} \
             --cfg-options \
-                model.backbone.init_cfg.type=Pretrained \
-                model.backbone.init_cfg.checkpoint=${WEIGHT_PATH} \
-                model.pretrained=None \
                 ${AMP_OPT}
 
         echo "[${COUNT}/${TOTAL}] ${MODEL_NAME} ${PRECISION} done."
@@ -65,4 +64,4 @@ for entry in "${MODELS[@]}"; do
 done
 
 echo ""
-echo "========== All segmentation tests finished (16 GPUs) =========="
+echo "========== All pretrain tests finished (16 GPUs) =========="
