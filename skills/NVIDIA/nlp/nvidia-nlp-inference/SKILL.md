@@ -145,33 +145,45 @@ docker run -d --gpus all --shm-size=100g \
 
 ---
 
-### 如何添加新的 NLP 模型
-
-只需新增一个 config 文件,不用改核心脚本。新加的模型必须是 sglang 能拉起的文本生成 LLM(非 NLP 场景请走其他 skill)。
-
-1. 在 `scripts/configs/` 下新建 `<model_name>.sh`,建议模型名带版本号(如 `qwen2.5-72b-instruct`),这样结果 CSV 按 `MODEL_NAME` 自动区分。
-2. config 必须 `export` 以下变量:
-   ```bash
-   export MODEL_PATH="${MODEL_PATH:-<权重路径>}"
-   export DOCKER_IMAGE="${DOCKER_IMAGE:-<镜像 tag>}"
-   export TP="${TP:-8}"
-   export PORT="${PORT:-30000}"
-   export EXTRA_SERVE_ARGS="${EXTRA_SERVE_ARGS:---trust-remote-code}"   # 或其他专属 flag
-   ```
-   用 `${VAR:-default}` 写法是为了让调用方在命令行预设的环境变量仍然能覆盖 config 默认值。
-3. 如需在 SKILL.md 的模型表、Docker 镜像章节同步登记该模型,便于后续 executor 检索。
-4. 调用:`MODEL_NAME=<model_name> bash scripts/serve.sh` 和 `MODEL_NAME=<model_name> bash scripts/test.sh`
-
----
-
 ### 关键性能指标
 
-关注以下指标:
-- 服务是否成功启动
-- 压测 CSV 是否成功生成
-- 压测日志是否存在异常报错
-- 吞吐、时延等 bench_serving 输出指标
-- 大上下文输入下的稳定性
+压测日志末尾会输出性能汇总，例如：
+
+```text
+Total token throughput (tok/s):          8324.38
+Concurrency:                             1189.77
+Mean E2E Latency (ms):                   585426.75
+Mean TTFT (ms):                          376538.75
+Mean TPOT (ms):                          102.05
+Mean ITL (ms):                           102.05
+```
+
+关注以下指标：
+
+| 类型 | 指标 | 说明 |
+|---|---|---|
+| 性能（必采） | `Output token throughput (tok/s)` | 输出 token 吞吐，核心吞吐指标 |
+| 性能（辅助） | `Mean TTFT (ms)` | 首 token 平均延迟 |
+| 性能（辅助） | `Mean TPOT (ms)` | 每输出 token 平均延迟（不含首 token） |
+| 性能（辅助） | `Mean ITL (ms)` | 平均 token 间延迟 |
+| 性能（辅助） | `Mean E2E Latency (ms)` | 端到端平均延迟 |
+| 性能（辅助） | `Concurrency` | 并发数 |
+
+**采集命令**（将 `LOG` 替换为实际日志路径，如 `/workspace/logs/bench.log`）：
+
+```bash
+# 核心：Output token throughput
+grep "Output token throughput" "$LOG" | awk '{print $5, $6}'
+
+# 辅助：TTFT
+grep "Mean TTFT" "$LOG" | awk '{print $4, $5}'
+
+# 辅助：TPOT
+grep "Mean TPOT" "$LOG" | awk '{print $4, $5}'
+
+# 辅助：ITL
+grep "Mean ITL" "$LOG" | awk '{print $4, $5}'
+```
 
 ---
 
