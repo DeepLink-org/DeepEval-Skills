@@ -1,68 +1,79 @@
-#!/bin/bash
-# 批量测试 segmentation 模型（在 rjob 内部运行）
-# 每个模型分别测试 FP32 和 FP16，2节点16卡
+#!/usr/bin/env bash
+set -euo pipefail
 
-cd ./models/onedl-mmsegmentation
-PYTHON=/usr/bin/python3
+# Segmentation benchmark. GPU count/model/precision can be controlled by env.
 
-export MMSEG_PATH=./models/onedl-mmsegmentation
-export MMCV_PATH=./models/onedl-mmcv
-export SYSTEM_PACKAGES=/usr/local/lib/python3.10/dist-packages
-export PYTHONPATH=$MMSEG_PATH:$MMCV_PATH:$SYSTEM_PACKAGES:$PYTHONPATH
+CV_SEG_MMSEG_DIR="${CV_SEG_MMSEG_DIR:-/workspace/code/onedl-mmsegmentation}"
+CV_SEG_MMCV_DIR="${CV_SEG_MMCV_DIR:-/workspace/code/onedl-mmcv}"
+CV_SEG_LOG_DIR="${CV_SEG_LOG_DIR:-/workspace/logs}"
+CV_SEG_WEIGHT_PATH="${CV_SEG_WEIGHT_PATH:-/workspace/weight/resnet50_v1c-2cccc1ad.pth}"
+CV_SEG_NGPU="${CV_SEG_NGPU:-${CARD_COUNT:-1}}"
+CV_SEG_MODELS="${CV_SEG_MODELS:-fcn}"
+CV_SEG_PRECISIONS="${CV_SEG_PRECISIONS:-fp16,fp32}"
+PYTHON="${PYTHON:-/usr/bin/python3}"
 
-export NCCL_NVLS_ENABLE=0
+cd "$CV_SEG_MMSEG_DIR"
 
-NGPU=8
-WEIGHT_PATH=./models/weight/resnet50_v1c-2cccc1ad.pth
-mkdir -p work_dirs
+export MMSEG_PATH="$CV_SEG_MMSEG_DIR"
+export MMCV_PATH="$CV_SEG_MMCV_DIR"
+export SYSTEM_PACKAGES="${SYSTEM_PACKAGES:-/usr/local/lib/python3.10/dist-packages}"
+export PYTHONPATH="$MMSEG_PATH:$MMCV_PATH:$SYSTEM_PACKAGES:${PYTHONPATH:-}"
+export NCCL_NVLS_ENABLE="${NCCL_NVLS_ENABLE:-0}"
 
-# 模型列表: "config_path model_name"
-# 4个模型全部使用 ResNetV1c-50 backbone，共用同一个权重
-MODELS=(
-    "configs/deeplabv3/deeplabv3_r50-d8_4xb2-40k_cityscapes-512x1024.py deeplabv3"
-    "configs/fcn/fcn_r50-d8_4xb2-40k_cityscapes-512x1024.py fcn"
-    "configs/pspnet/pspnet_r50-d8_4xb2-40k_cityscapes-512x1024.py pspnet"
-    "configs/apcnet/apcnet_r50-d8_4xb2-40k_cityscapes-512x1024.py apcnet"
-)
+mkdir -p "$CV_SEG_LOG_DIR"
 
+model_config() {
+    case "$1" in
+        deeplabv3) echo "configs/deeplabv3/deeplabv3_r50-d8_4xb2-40k_cityscapes-512x1024.py" ;;
+        fcn) echo "configs/fcn/fcn_r50-d8_4xb2-40k_cityscapes-512x1024.py" ;;
+        pspnet) echo "configs/pspnet/pspnet_r50-d8_4xb2-40k_cityscapes-512x1024.py" ;;
+        apcnet) echo "configs/apcnet/apcnet_r50-d8_4xb2-40k_cityscapes-512x1024.py" ;;
+        *) echo "Unsupported model: $1" >&2; return 1 ;;
+    esac
+}
+
+IFS=',' read -r -a MODELS <<< "$CV_SEG_MODELS"
+IFS=',' read -r -a PRECISIONS <<< "$CV_SEG_PRECISIONS"
 TOTAL=${#MODELS[@]}
 COUNT=0
 
-for entry in "${MODELS[@]}"; do
-    CONFIG=$(echo "$entry" | awk '{print $1}')
-    MODEL_NAME=$(echo "$entry" | awk '{print $2}')
+for MODEL_NAME in "${MODELS[@]}"; do
+    MODEL_NAME="$(echo "$MODEL_NAME" | xargs)"
+    CONFIG="$(model_config "$MODEL_NAME")"
     COUNT=$((COUNT + 1))
 
-    for PRECISION in fp32 fp16; do
-        if [ "$PRECISION" == "fp16" ]; then
+    for PRECISION in "${PRECISIONS[@]}"; do
+        PRECISION="$(echo "$PRECISION" | xargs)"
+        if [ "$PRECISION" = "fp16" ]; then
             AMP_OPT="optim_wrapper.type=AmpOptimWrapper"
-        else
+        elif [ "$PRECISION" = "fp32" ]; then
             AMP_OPT="optim_wrapper.type=OptimWrapper"
+        else
+            echo "Unsupported precision: $PRECISION" >&2
+            exit 1
         fi
 
         echo ""
         echo "============================================================"
-        echo "  [${COUNT}/${TOTAL}] ${MODEL_NAME} - ${PRECISION} - ${NGPU} GPUs (1 nodes)"
+        echo "  [${COUNT}/${TOTAL}] ${MODEL_NAME} - ${PRECISION} - ${CV_SEG_NGPU} GPUs"
         echo "============================================================"
 
-        $PYTHON -m torch.distributed.launch \
-            --nnodes=$NODE_COUNT \
-            --node-rank=$NODE_RANK \
-            --master-addr=$MASTER_ADDR \
-            --nproc_per_node=8 \
-            --master-port=29500 \
-            tools/train.py ${CONFIG} \
+        "$PYTHON" -m torch.distributed.launch \
+            --nnodes=1 \
+            --nproc_per_node="${CV_SEG_NGPU}" \
+            --master_port="${MASTER_PORT:-29500}" \
+            tools/train.py "$CONFIG" \
             --launcher pytorch \
-            --work-dir work_dirs/${MODEL_NAME}_gpus${NGPU}_${PRECISION} \
+            --work-dir "${CV_SEG_LOG_DIR}/${MODEL_NAME}_gpus${CV_SEG_NGPU}_${PRECISION}" \
             --cfg-options \
                 model.backbone.init_cfg.type=Pretrained \
-                model.backbone.init_cfg.checkpoint=${WEIGHT_PATH} \
+                model.backbone.init_cfg.checkpoint="${CV_SEG_WEIGHT_PATH}" \
                 model.pretrained=None \
-                ${AMP_OPT}
+                "$AMP_OPT"
 
         echo "[${COUNT}/${TOTAL}] ${MODEL_NAME} ${PRECISION} done."
     done
 done
 
 echo ""
-echo "========== All segmentation tests finished (16 GPUs) =========="
+echo "========== All segmentation tests finished =========="
