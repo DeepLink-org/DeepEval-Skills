@@ -1,67 +1,92 @@
-#!/bin/bash
-# 批量测试 pretrain 模型（在 rjob 内部运行）
-# 每个模型分别测试 FP32 和 FP16，2节点16卡
+#!/usr/bin/env bash
+set -euo pipefail
 
-cd ./models/onedl-mmpretrain
-PYTHON=/usr/bin/python3
+# Pretrain/classification benchmark. GPU count/model/precision can be controlled by env.
 
-export MMPRE_PATH=./models/onedl-mmpretrain
-export MMCV_PATH=./models/onedl-mmcv
-export SYSTEM_PACKAGES=/usr/local/lib/python3.10/dist-packages
-export PYTHONPATH=$MMPRE_PATH:$MMCV_PATH:$SYSTEM_PACKAGES:$PYTHONPATH
+CV_PRE_MMPRE_DIR="${CV_PRE_MMPRE_DIR:-/workspace/code/onedl-mmpretrain}"
+CV_PRE_MMCV_DIR="${CV_PRE_MMCV_DIR:-/workspace/code/onedl-mmcv}"
+CV_PRE_LOG_DIR="${CV_PRE_LOG_DIR:-/workspace/logs}"
+CV_PRE_DATASET_DIR="${CV_PRE_DATASET_DIR:-/workspace/datasets/imagenet}"
+CV_PRE_NGPU="${CV_PRE_NGPU:-${CARD_COUNT:-1}}"
+CV_PRE_MODELS="${CV_PRE_MODELS:-resnet50}"
+CV_PRE_PRECISIONS="${CV_PRE_PRECISIONS:-fp16,fp32}"
+PYTHON="${PYTHON:-/usr/bin/python3}"
 
-export NCCL_NVLS_ENABLE=0
+cd "$CV_PRE_MMPRE_DIR"
 
-NGPU=8
-mkdir -p work_dirs
+export MMPRE_PATH="$CV_PRE_MMPRE_DIR"
+export MMCV_PATH="$CV_PRE_MMCV_DIR"
+export SYSTEM_PACKAGES="${SYSTEM_PACKAGES:-/usr/local/lib/python3.10/dist-packages}"
+export PYTHONPATH="$MMPRE_PATH:$MMCV_PATH:$SYSTEM_PACKAGES:${PYTHONPATH:-}"
+export NCCL_NVLS_ENABLE="${NCCL_NVLS_ENABLE:-0}"
 
-# 模型列表: "config_path model_name"
-MODELS=(
-    "configs/resnet/resnet50_8xb32_in1k.py resnet50"
-    "configs/inception_v3/inception-v3_8xb32_in1k.py inception_v3"
-    "configs/seresnet/seresnet50_8xb32_in1k.py seresnet50"
-    "configs/mobilenet_v2/mobilenet-v2_8xb32_in1k.py mobilenet_v2"
-    "configs/shufflenet_v2/shufflenet-v2-1x_16xb64_in1k.py shufflenet_v2"
-    "configs/densenet/densenet121_4xb256_in1k.py densenet121"
-    "configs/swin_transformer/swin-large_16xb64_in1k.py swin_large"
-    "configs/efficientnet/efficientnet-b2_8xb32_in1k.py efficientnet_b2"
-)
+if [ -f /workspace/tools/custom_iter_timer_hook.py ]; then
+    cp /workspace/tools/custom_iter_timer_hook.py "$CV_PRE_MMPRE_DIR/custom_iter_timer_hook.py"
+fi
 
+mkdir -p "$CV_PRE_LOG_DIR"
+if [ -d "$CV_PRE_DATASET_DIR" ]; then
+    mkdir -p data
+    ln -sfn "$CV_PRE_DATASET_DIR" data/imagenet
+fi
+
+model_config() {
+    case "$1" in
+        resnet50) echo "configs/resnet/resnet50_8xb32_in1k.py" ;;
+        inception_v3) echo "configs/inception_v3/inception-v3_8xb32_in1k.py" ;;
+        seresnet50) echo "configs/seresnet/seresnet50_8xb32_in1k.py" ;;
+        mobilenet_v2) echo "configs/mobilenet_v2/mobilenet-v2_8xb32_in1k.py" ;;
+        shufflenet_v2) echo "configs/shufflenet_v2/shufflenet-v2-1x_16xb64_in1k.py" ;;
+        densenet121) echo "configs/densenet/densenet121_4xb256_in1k.py" ;;
+        swin_large) echo "configs/swin_transformer/swin-large_16xb64_in1k.py" ;;
+        efficientnet_b2) echo "configs/efficientnet/efficientnet-b2_8xb32_in1k.py" ;;
+        *) echo "Unsupported model: $1" >&2; return 1 ;;
+    esac
+}
+
+IFS=',' read -r -a MODELS <<< "$CV_PRE_MODELS"
+IFS=',' read -r -a PRECISIONS <<< "$CV_PRE_PRECISIONS"
 TOTAL=${#MODELS[@]}
 COUNT=0
 
-for entry in "${MODELS[@]}"; do
-    CONFIG=$(echo "$entry" | awk '{print $1}')
-    MODEL_NAME=$(echo "$entry" | awk '{print $2}')
+for MODEL_NAME in "${MODELS[@]}"; do
+    MODEL_NAME="$(echo "$MODEL_NAME" | xargs)"
+    CONFIG="$(model_config "$MODEL_NAME")"
     COUNT=$((COUNT + 1))
 
-    for PRECISION in fp32 fp16; do
-        if [ "$PRECISION" == "fp16" ]; then
+    test -f "$CONFIG"
+
+    for PRECISION in "${PRECISIONS[@]}"; do
+        PRECISION="$(echo "$PRECISION" | xargs)"
+        if [ "$PRECISION" = "fp16" ]; then
             AMP_OPT="optim_wrapper.type=AmpOptimWrapper"
-        else
+        elif [ "$PRECISION" = "fp32" ]; then
             AMP_OPT="optim_wrapper.type=OptimWrapper"
+        else
+            echo "Unsupported precision: $PRECISION" >&2
+            exit 1
         fi
 
         echo ""
         echo "============================================================"
-        echo "  [${COUNT}/${TOTAL}] ${MODEL_NAME} - ${PRECISION} - ${NGPU} GPUs (1 nodes)"
+        echo "  [${COUNT}/${TOTAL}] ${MODEL_NAME} - ${PRECISION} - ${CV_PRE_NGPU} GPUs"
         echo "============================================================"
 
-        $PYTHON -m torch.distributed.launch \
-            --nnodes=$NODE_COUNT \
-            --node-rank=$NODE_RANK \
-            --master-addr=$MASTER_ADDR \
-            --nproc_per_node=8 \
-            --master-port=29500 \
-            tools/train.py ${CONFIG} \
+        "$PYTHON" -m torch.distributed.launch \
+            --nnodes="${NODE_COUNT:-1}" \
+            --node-rank="${NODE_RANK:-0}" \
+            --master-addr="${MASTER_ADDR:-127.0.0.1}" \
+            --nproc_per_node="${CV_PRE_NGPU}" \
+            --master-port="${MASTER_PORT:-29500}" \
+            tools/train.py "$CONFIG" \
             --launcher pytorch \
-            --work-dir work_dirs/${MODEL_NAME}_gpus${NGPU}_${PRECISION} \
+            --work-dir "${CV_PRE_LOG_DIR}/${MODEL_NAME}_gpus${CV_PRE_NGPU}_${PRECISION}" \
             --cfg-options \
-                ${AMP_OPT}
+                "$AMP_OPT"
 
         echo "[${COUNT}/${TOTAL}] ${MODEL_NAME} ${PRECISION} done."
     done
 done
 
 echo ""
-echo "========== All pretrain tests finished (16 GPUs) =========="
+echo "========== All pretrain tests finished =========="

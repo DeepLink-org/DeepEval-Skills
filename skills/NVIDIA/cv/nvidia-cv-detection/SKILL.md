@@ -1,6 +1,6 @@
 ---
 name: nvidia-cv-detection
-description: NVIDIA GPU 上目标检测模型训练性能评测技能。基于 onedl-mmdetection，用于指导 executor 完成容器启动、批量检测训练脚本执行、日志采集与性能指标分析。适用于 faster_rcnn、mask_rcnn、cascade_rcnn、retinanet、yolov3、fcos、ssd300、centernet、solo、swin_mask_rcnn 等模型。
+description: NVIDIA GPU 上 CV 目标检测训练性能评测技能。基于 /workspace/code 中的 onedl-mmdetection 实现和 batch_detection.sh，用于指导 executor 完成容器启动、脚本执行、日志采集与 AVG_ITER_TIME 性能指标分析。默认适配 faster_rcnn + COCO + ResNet50 backbone 权重，可通过环境变量扩展到 mask_rcnn、cascade_rcnn、retinanet、yolov3、fcos、ssd300、centernet、solo、swin_mask_rcnn 等模型。
 ---
 
 ## 触发条件
@@ -14,182 +14,317 @@ description: NVIDIA GPU 上目标检测模型训练性能评测技能。基于 o
 
 ---
 
-**基础目录配置**：
-- 模型权重目录：`/data/models`
-- 数据集目录：`/data/datasets`
-- 代码挂载目录：`/workspace/code`
-- 训练日志输出目录：`/workspace/logs`
+## 环境变量定义
+
+| 环境变量 | 默认值/映射目录 | 是否必需 | 说明 |
+|---------|----------------|----------|------|
+| `CV_DET_HOST_CODE_DIR` | `/path/to/cv/code` | 是 | 宿主机代码目录，Docker 启动时挂载到容器 `/workspace/code`。 |
+| `CV_DET_HOST_LOG_DIR` | `/path/to/cv/logs` | 是 | 宿主机日志目录，Docker 启动时挂载到容器 `/workspace/logs`。 |
+| `CV_DET_HOST_DATASET_DIR` | `/path/to/cv/datasets` | 是 | 宿主机数据集目录，Docker 启动时只读挂载到容器 `/workspace/datasets`。 |
+| `CV_DET_HOST_WEIGHT_DIR` | `/path/to/cv/weight` | 是 | 宿主机权重目录，Docker 启动时只读挂载到容器 `/workspace/weight`。 |
+| `CV_DET_PROJECT_ROOT` | `/workspace/code` | 是 | 容器内代码根目录。 |
+| `CV_DET_MMDET_DIR` | `/workspace/code/onedl-mmdetection` | 是 | onedl-mmdetection 项目目录。 |
+| `CV_DET_MMCV_DIR` | `/workspace/code/onedl-mmcv` | 是 | onedl-mmcv 项目目录，会加入 `PYTHONPATH`。 |
+| `CV_DET_SCRIPT` | `/workspace/code/batch_detection.sh` 或 `/workspace/scripts/batch_detection.sh` | 是 | 实际批量运行脚本。代码目录已有脚本时优先使用，否则用 skill 预置脚本。 |
+| `CV_DET_WEIGHT_DIR` | `/workspace/weight` | 是 | 预训练权重目录。 |
+| `CV_DET_DATASET_DIR` | `/workspace/datasets/coco` | 是 | COCO 数据集目录；脚本会建立 `onedl-mmdetection/data/coco` 软链接。 |
+| `CV_DET_LOG_DIR` | `/workspace/logs` | 是 | 训练日志和 work-dir 输出根目录。 |
+| `CV_DET_WORK_DIR` | `/workspace/logs/${MODEL_NAME}_gpus${CV_DET_NGPU}_${PRECISION}` | 是 | mmdet `--work-dir` 输出目录，实际日志会在其时间戳子目录下自动生成。 |
+| `CV_DET_LOG_GLOB` | `/workspace/logs/${MODEL_NAME}_gpus${CV_DET_NGPU}_${PRECISION}/*/*.log` | 否 | 用于采集指标的日志匹配模式；为空时按模型、卡数、精度自动推导。 |
+| `CV_DET_DOCKER_IMAGE` | `registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv` | 是 | 运行镜像。 |
+| `CV_DET_CONTAINER_NAME` | `cv_det_bench` | 否 | 容器名。 |
+| `CV_DET_NGPU` | 来自 task config 的 `card_count`，默认 `1` | 否 | 训练使用的 GPU 数；生成脚本必须显式设置。 |
+| `CV_DET_MODELS` | `faster_rcnn` | 否 | 逗号分隔模型列表。 |
+| `CV_DET_PRECISIONS` | `fp16,fp32` | 否 | 逗号分隔精度列表。 |
+
+说明：
+- 本 skill 以用户当前 `/workspace/code` 实现为准，不再假设代码位于 `./models/onedl-mmdetection`。
+- Docker 启动阶段使用 `CV_DET_HOST_*`，运行阶段只使用容器内 `/workspace/*` 路径。
+- executor 会把 skill assets 上传到 `/workspace/scripts` 和 `/workspace/tools`。如果 `/workspace/code/batch_detection.sh` 不存在，生成脚本应使用 `/workspace/scripts/batch_detection.sh`。
 
 ---
 
-### 支持的模型配置
+## 目录结构约定
 
-**当前支持模型**（共 10 个）：
-- `faster_rcnn`
-- `mask_rcnn`
-- `cascade_rcnn`
-- `retinanet`
-- `yolov3`
-- `fcos`
-- `ssd300`
-- `centernet`
-- `solo`
-- `swin_mask_rcnn`
+```text
+/workspace/code/
+├── batch_detection.sh              # 可选；存在时优先执行
+├── onedl-mmdetection/
+│   ├── configs/
+│   ├── tools/train.py
+│   └── ...
+└── onedl-mmcv/
 
-**当前支持任务**：
-- 基于 `onedl-mmdetection` 的检测模型训练性能测试
-- 每个模型分别测试 FP32 和 FP16 精度
-- 使用 `custom_iter_timer_hook.py` 采集训练迭代耗时
+/workspace/weight/
+├── resnet50-0676ba61.pth
+├── resnet50_msra-5891d200.pth
+├── darknet53-a628ea1b.pth
+├── vgg16_caffe-292e1171.pth
+├── resnet18-f37072fd.pth
+└── swin_tiny_patch4_window7_224.pth
 
-**硬件要求**：
-- 1 节点，8 张 NVIDIA GPU
+/workspace/datasets/coco/
+├── annotations/
+├── train2017/
+└── val2017/
 
----
-
-### 依赖要求
-
-依赖通过指定 Docker 镜像提供，不需要在宿主机额外安装：
-
-```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_all
+/workspace/logs/
 ```
 
-容器内已预装 PyTorch 2.7.0+cu128、TorchVision 0.22.0、MMEngine 0.10.9、onedl-mmcv、onedl-mmdetection 等。
+---
+
+## 支持的模型配置
+
+默认运行：`faster_rcnn`，默认精度 `fp16,fp32`，默认 GPU 数来自 task config。
+
+支持模型：`faster_rcnn`、`mask_rcnn`、`cascade_rcnn`、`retinanet`、`yolov3`、`fcos`、`ssd300`、`centernet`、`solo`、`swin_mask_rcnn`。
+
+默认权重位于 `/workspace/weight`，脚本会按模型自动选择对应 backbone 权重。
 
 ---
 
-### 模型与数据路径
+## 依赖要求
 
-当前脚本默认使用以下资源：
+Docker 镜像：
 
-**模型权重路径**：
 ```bash
-/data/models/weight/   # backbone 预训练权重目录
+registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv
 ```
 
-依赖以下权重文件：
-- `resnet50-0676ba61.pth`
-- `resnet50_msra-5891d200.pth`
-- `darknet53-a628ea1b.pth`
-- `vgg16_caffe-292e1171.pth`
-- `resnet18-f37072fd.pth`
-- `swin_tiny_patch4_window7_224.pth`
-
-**数据集路径**：
-```bash
-/data/datasets/coco/   # COCO 2017 数据集
-```
-
-如模型权重或数据集路径发生变化，应同步修改 `batch_detection.sh` 中的相关路径。
-
-**自定义 Hook**：
-- `custom_iter_timer_hook.py` 位于 skill 目录下的 `tools/custom_iter_timer_hook.py`，部署时拷贝到 `onedl-mmdetection/` 根目录：
-  ```bash
-  cp tools/custom_iter_timer_hook.py /workspace/code/onedl-mmdetection/
-  ```
-- 用于在指定迭代区间（begin_iter=200, end_iter=500）统计平均迭代耗时。
+容器内需要具备 Python 3.10、PyTorch + CUDA、MMEngine、onedl-mmcv、onedl-mmdetection。
 
 ---
 
-### 容器启动脚本
+## 交互参数映射规则
 
-**Docker 运行命令**：
+| 用户表达 | 必须设置的变量 | 结果 |
+|---------|----------------|------|
+| `1卡`、`单卡`、`card_count=1` | `export CV_DET_NGPU=1` | `--nproc_per_node=1`，日志目录包含 `_gpus1_`。 |
+| `8卡`、`八卡`、`card_count=8` | `export CV_DET_NGPU=8` | `--nproc_per_node=8`，日志目录包含 `_gpus8_`。 |
+| `fp16`、`半精度` | `export CV_DET_PRECISIONS=fp16` | 使用 `AmpOptimWrapper`。 |
+| `fp32`、`单精度` | `export CV_DET_PRECISIONS=fp32` | 使用 `OptimWrapper`。 |
+| `faster_rcnn` / `mask_rcnn` / `retinanet` 等 | `export CV_DET_MODELS=<model>` | 运行对应模型配置。 |
+
+如果用户没有指定，默认值为：`CV_DET_NGPU=1`、`CV_DET_MODELS=faster_rcnn`、`CV_DET_PRECISIONS=fp16,fp32`。
+
+生成的评测脚本应执行：
+
 ```bash
-docker run -it \
-  --name mmdet_benchmark \
-  --gpus all \
-  --shm-size=128g \
-  -v /data/models:/data/models \
-  -v /data/datasets:/data/datasets \
-  -v /workspace/code:/workspace/code \
-  -v /workspace/logs:/workspace/logs \
-  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_all \
+if [ -f /workspace/code/batch_detection.sh ]; then
+  export CV_DET_SCRIPT=/workspace/code/batch_detection.sh
+else
+  export CV_DET_SCRIPT=/workspace/scripts/batch_detection.sh
+fi
+bash "$CV_DET_SCRIPT"
+```
+
+---
+
+## 第一阶段：容器启动
+
+```bash
+docker run --gpus all \
+  --network host --ipc host --shm-size=128g \
+  -it --name ${CV_DET_CONTAINER_NAME:-cv_det_bench} \
+  -v ${CV_DET_HOST_CODE_DIR:-/path/to/cv/code}:/workspace/code:rw \
+  -v ${CV_DET_HOST_LOG_DIR:-/path/to/cv/logs}:/workspace/logs:rw \
+  -v ${CV_DET_HOST_DATASET_DIR:-/path/to/cv/datasets}:/workspace/datasets:ro \
+  -v ${CV_DET_HOST_WEIGHT_DIR:-/path/to/cv/weight}:/workspace/weight:ro \
+  ${CV_DET_DOCKER_IMAGE:-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv} \
   bash
 ```
 
-说明：
-- 使用 **交互式** `-it` 进入 `bash`，便于在同一终端内执行训练脚本；如需后台常驻可改为 `-d` 并配合 `docker exec`。
-- **`--shm-size=128g`**：避免大 batch 数据加载时共享内存不足。
-- 若已存在同名容器，需先执行 `docker rm -f mmdet_benchmark` 或更换 `--name`。
+如果容器名已存在：`docker rm -f ${CV_DET_CONTAINER_NAME:-cv_det_bench}`。
 
 ---
 
-### 训练脚本
-
-批量测试脚本位于 skill 目录下的 `scripts/batch_detection.sh`，部署时拷贝到代码挂载目录：
+## 第二阶段：运行评测
 
 ```bash
-cp scripts/batch_detection.sh /workspace/code/
+export CV_DET_PROJECT_ROOT=${CV_DET_PROJECT_ROOT:-/workspace/code}
+export CV_DET_MMDET_DIR=${CV_DET_MMDET_DIR:-/workspace/code/onedl-mmdetection}
+export CV_DET_MMCV_DIR=${CV_DET_MMCV_DIR:-/workspace/code/onedl-mmcv}
+if [ -f /workspace/code/batch_detection.sh ]; then
+  export CV_DET_SCRIPT=${CV_DET_SCRIPT:-/workspace/code/batch_detection.sh}
+else
+  export CV_DET_SCRIPT=${CV_DET_SCRIPT:-/workspace/scripts/batch_detection.sh}
+fi
+export CV_DET_WEIGHT_DIR=${CV_DET_WEIGHT_DIR:-/workspace/weight}
+export CV_DET_DATASET_DIR=${CV_DET_DATASET_DIR:-/workspace/datasets/coco}
+export CV_DET_LOG_DIR=${CV_DET_LOG_DIR:-/workspace/logs}
+export CV_DET_NGPU=${CV_DET_NGPU:-${CARD_COUNT:-1}}
+export CV_DET_MODELS=${CV_DET_MODELS:-faster_rcnn}
+export CV_DET_PRECISIONS=${CV_DET_PRECISIONS:-fp16,fp32}
+chmod +x "$CV_DET_SCRIPT"
+
+CV_DET_RUN_MARKER=${CV_DET_RUN_MARKER:-/tmp/cv_det_run_marker.$(date +%s).$$}
+touch "$CV_DET_RUN_MARKER"
+cd "$CV_DET_MMDET_DIR"
+bash "$CV_DET_SCRIPT"
+
+MODEL_NAME=${CV_DET_MODELS%%,*}
+PRECISION=${CV_DET_PRECISIONS%%,*}
+CV_DET_WORK_DIR=${CV_DET_WORK_DIR:-${CV_DET_LOG_DIR}/${MODEL_NAME}_gpus${CV_DET_NGPU}_${PRECISION}}
+CV_DET_LATEST_LOG=$(find "$CV_DET_WORK_DIR" -type f -name "*.log" -newer "$CV_DET_RUN_MARKER" -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
+test -n "$CV_DET_LATEST_LOG"
+export CV_DET_LATEST_LOG
 ```
 
-执行方式：
+运行前检查：
 
 ```bash
-cd /workspace/code/onedl-mmdetection
-bash ../batch_detection.sh 2>&1 | tee /workspace/logs/detection.log
+test -d "$CV_DET_MMDET_DIR"
+test -d "$CV_DET_MMCV_DIR"
+test -f "$CV_DET_SCRIPT"
+test -d "$CV_DET_WEIGHT_DIR"
+test -d "$CV_DET_DATASET_DIR"
 ```
-
-当前脚本默认行为：
-- 自动遍历 10 个检测模型
-- 每个模型分别执行 FP32 和 FP16 两轮测试
-- 8 卡分布式训练（`torch.distributed.launch --nproc_per_node=8`）
-- 通过 `--cfg-options` 动态切换 `optim_wrapper.type=AmpOptimWrapper`（FP16）或 `OptimWrapper`（FP32）
-- 自动为不同模型注入对应的 backbone 预训练权重
-- 输出目录位于 `work_dirs/${MODEL_NAME}_gpus8_${PRECISION}`
-- **不要修改** `begin_iter` (=200) / `end_iter` (=500) 等 CustomIterTimerHook 参数，否则与基线指标不可比
 
 ---
 
-### 关键性能指标
+## 结果文件命名与汇总规则
 
-训练日志中包含 `CustomIterTimerHook` 输出的迭代耗时汇总行，例如：
+生成评测脚本时禁止把所有单项结果固定写到 `/workspace/logs/result.json`，否则不同模型、卡数或精度会互相覆盖。
+
+每个模型、卡数、精度组合必须写入独立结果文件：
+
+```bash
+RESULT_JSON="${CV_DET_LOG_DIR}/${MODEL_NAME}_gpus${CV_DET_NGPU}_${PRECISION}_result.json"
+```
+
+示例：
 
 ```text
-2026/03/18 11:09:16 - mmengine - INFO - === AVG_ITER_TIME: 0.0951s | DATA: 0.0036s | OP: 0.0915s ===
+/workspace/logs/faster_rcnn_gpus1_fp16_result.json
+/workspace/logs/faster_rcnn_gpus1_fp32_result.json
+/workspace/logs/mask_rcnn_gpus8_fp16_result.json
+/workspace/logs/mask_rcnn_gpus8_fp32_result.json
 ```
 
-关注以下指标：
+同时，生成评测脚本必须把本次运行产生的所有单项结果汇总写入：
 
-| 类型 | 指标 | 说明 |
-|---|---|---|
-| 性能（必采） | `AVG_ITER_TIME` | 平均迭代耗时（秒），核心吞吐指标 |
-| 性能（辅助） | `DATA` | 数据加载耗时 |
-| 性能（辅助） | `OP` | 纯算子计算耗时 |
+```text
+/workspace/logs/eval_result.json
+```
 
-**采集命令**（将 `LOG` 替换为实际日志路径，如 `/workspace/logs/detection.log`）：
+`eval_result.json` 格式建议如下：
+
+```json
+{
+  "status": "success",
+  "task": "cv_detection",
+  "model": "faster_rcnn",
+  "gpu_count": 1,
+  "precisions": ["fp16", "fp32"],
+  "results": {
+    "faster_rcnn_gpus1_fp16": {
+      "model": "faster_rcnn",
+      "gpu_count": 1,
+      "precision": "fp16",
+      "log": "/workspace/logs/faster_rcnn_gpus1_fp16/<timestamp>/<timestamp>.log",
+      "result_json": "/workspace/logs/faster_rcnn_gpus1_fp16_result.json",
+      "avg_iter_time": 0.0,
+      "data_time": 0.0,
+      "op_time": 0.0
+    }
+  }
+}
+```
+
+如果 `CV_DET_PRECISIONS=fp16,fp32`，生成脚本必须分别解析 fp16 和 fp32 的 mmengine 日志，写两个单项结果文件，并把两个结果都写入同一个 `/workspace/logs/eval_result.json`。如果用户只指定 `fp32`，则 `eval_result.json` 只包含 `fp32` 的结果。
+
+生成脚本必须使用 `CV_DET_RUN_MARKER` 只解析 marker 之后新生成/更新的日志，避免读取历史日志。
+
+下面是结果汇总逻辑的参考实现，生成脚本应采用等价逻辑：
 
 ```bash
-# 核心：AVG_ITER_TIME
-grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "AVG_ITER_TIME: \K[0-9.]+"
+python3 - <<'CV_DET_PARSE'
+import glob, json, os, re
 
-# 辅助：分别提取 DATA 和 OP
+models = [m.strip() for m in os.environ.get("CV_DET_MODELS", "faster_rcnn").split(",") if m.strip()]
+gpu = os.environ.get("CV_DET_NGPU", "1")
+log_dir = os.environ.get("CV_DET_LOG_DIR", "/workspace/logs")
+marker = os.environ.get("CV_DET_RUN_MARKER")
+precisions = [p.strip() for p in os.environ.get("CV_DET_PRECISIONS", "fp16,fp32").split(",") if p.strip()]
+marker_mtime = os.path.getmtime(marker) if marker and os.path.exists(marker) else 0
+
+results = {}
+for model in models:
+    for precision in precisions:
+        work_dir = f"{log_dir}/{model}_gpus{gpu}_{precision}"
+        logs = [p for p in glob.glob(f"{work_dir}/*/*.log") if os.path.getmtime(p) > marker_mtime]
+        logs.sort(key=os.path.getmtime, reverse=True)
+        log = logs[0] if logs else ""
+        text = open(log, "r", encoding="utf-8", errors="ignore").read() if log else ""
+        rows = re.findall(r"AVG_ITER_TIME:\s*([0-9.]+)s\s*\|\s*DATA:\s*([0-9.]+)s\s*\|\s*OP:\s*([0-9.]+)s", text)
+        last = rows[-1] if rows else None
+        key = f"{model}_gpus{gpu}_{precision}"
+        item = {
+            "model": model,
+            "gpu_count": int(gpu),
+            "precision": precision,
+            "log": log,
+            "avg_iter_time": float(last[0]) if last else None,
+            "data_time": float(last[1]) if last else None,
+            "op_time": float(last[2]) if last else None,
+        }
+        item_path = os.path.join(log_dir, f"{key}_result.json")
+        item["result_json"] = item_path
+        with open(item_path, "w", encoding="utf-8") as f:
+            json.dump(item, f, ensure_ascii=False, indent=2)
+        results[key] = item
+
+aggregate = {
+    "status": "success" if results and all(v.get("avg_iter_time") is not None for v in results.values()) else "partial",
+    "task": "cv_detection",
+    "model": ",".join(models),
+    "gpu_count": int(gpu),
+    "precisions": precisions,
+    "results": results,
+}
+with open(os.path.join(log_dir, "eval_result.json"), "w", encoding="utf-8") as f:
+    json.dump(aggregate, f, ensure_ascii=False, indent=2)
+print("eval result json written: /workspace/logs/eval_result.json")
+CV_DET_PARSE
+```
+
+---
+
+## 关键性能指标
+
+训练日志中应包含 `CustomIterTimerHook` 输出，例如：
+
+```text
+=== AVG_ITER_TIME: 0.0951s | DATA: 0.0036s | OP: 0.0915s ===
+```
+
+关注指标：`AVG_ITER_TIME`、`DATA`、`OP`。
+
+采集命令：
+
+```bash
+if [ -n "${CV_DET_LATEST_LOG:-}" ]; then
+  LOG="$CV_DET_LATEST_LOG"
+else
+  MODEL_NAME=${CV_DET_MODELS%%,*}
+  PRECISION=${CV_DET_PRECISIONS%%,*}
+  CV_DET_WORK_DIR=${CV_DET_WORK_DIR:-${CV_DET_LOG_DIR:-/workspace/logs}/${MODEL_NAME:-faster_rcnn}_gpus${CV_DET_NGPU:-1}_${PRECISION:-fp16}}
+  test -n "${CV_DET_RUN_MARKER:-}"
+  LOG=$(find "$CV_DET_WORK_DIR" -type f -name "*.log" -newer "$CV_DET_RUN_MARKER" -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
+fi
+test -n "$LOG"
+grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "AVG_ITER_TIME: \K[0-9.]+"
 grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "DATA: \K[0-9.]+"
 grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "OP: \K[0-9.]+"
 ```
 
 ---
 
-### 常见问题
+## 常见问题
 
-1. **容器名已存在**
-   - 执行 `docker rm -f mmdet_benchmark` 后重试，或改用新容器名。
-
-2. **找不到 `batch_detection.sh`**
-   - 检查 `/workspace/code` 挂载是否包含该脚本。
-
-3. **预训练权重加载失败**
-   - 检查 `/data/models/weight/` 下对应权重文件是否存在。
-   - 检查 config 中 backbone 初始化方式是否允许从 checkpoint 加载。
-
-4. **数据集报错或找不到数据**
-   - 检查 `/data/datasets/coco/` 是否包含 COCO 2017 数据集（`annotations/`、`train2017/`、`val2017/`）。
-
-5. **无法统计性能数据**
-   - 检查 `custom_iter_timer_hook.py` 是否已放置到 `onedl-mmdetection/` 根目录下。
-   - 检查配置文件中是否正确导入 `CustomIterTimerHook`。
-
-6. **共享内存不足**
-   - 已使用 `--shm-size=128g`；若仍报错，检查数据加载 `num_workers` 与 Docker `--shm-size`。
-
-7. **`grep -P` 不可用**
-   - 换用支持 Perl 正则的环境执行命令，或将日志行复制到本地用 `python -c` 解析。
+1. **找不到 `batch_detection.sh`**：检查 `/workspace/code/batch_detection.sh` 是否存在；不存在时使用 agent 上传的 `/workspace/scripts/batch_detection.sh`。
+2. **找不到 `onedl-mmdetection` 或 `onedl-mmcv`**：检查 `CV_DET_MMDET_DIR` 和 `CV_DET_MMCV_DIR`。
+3. **预训练权重加载失败**：检查 `CV_DET_WEIGHT_DIR=/workspace/weight` 下对应权重文件是否存在。
+4. **数据集路径错误**：检查 `CV_DET_DATASET_DIR=/workspace/datasets/coco` 是否包含 COCO 数据集；脚本会建立 `onedl-mmdetection/data/coco` 软链接。
+5. **没有 `AVG_ITER_TIME`**：确认 `custom_iter_timer_hook.py` 已被项目 config 引入，且不要直接读取历史最新日志，应使用 `CV_DET_RUN_MARKER`。
+6. **GPU 数不匹配**：导出 `CV_DET_NGPU=<card_count>`，并确认容器可见 GPU 数。
