@@ -62,7 +62,7 @@ description: NVIDIA GPU 上 CV 预训练/分类模型训练性能评测技能。
 
 支持模型：`resnet50`、`inception_v3`、`seresnet50`、`mobilenet_v2`、`shufflenet_v2`、`densenet121`、`swin_large`、`efficientnet_b2`。
 
-脚本会将 ImageNet 数据集链接到 `onedl-mmpretrain/data/imagenet`。
+当前镜像内的 `onedl-mmpretrain/configs/_base_/datasets/imagenet_bs32.py` 已配置为直接从 `/workspace/datasets/imagenet` 读取数据集，不需要再创建 `data/imagenet` 软链接。
 
 ---
 
@@ -152,7 +152,7 @@ GPU_NUM="${CARD_COUNT:-1}"    # 默认使用 task config 的 card_count，未提
 
 **注意**：
 - `batch_pretrain.sh` 可直接放在 `/workspace/code/batch_pretrain.sh`；如果运行环境中不存在，则从 agent 预置的 `/workspace/scripts/batch_pretrain.sh` 复制到该路径
-- 脚本会自动查找 mmpretrain 源码目录，并建立 `data/imagenet -> /workspace/datasets/imagenet` 软链接
+- 脚本会自动查找 mmpretrain 源码目录；数据集路径由镜像内 `configs/_base_/datasets/imagenet_bs32.py` 直接指向 `/workspace/datasets/imagenet`
 - `onedl-mmcv` 已通过 `pip install .` 安装到镜像环境时，不需要提供 `/workspace/code/onedl-mmcv`
 
 ### 步骤 2：执行训练评测
@@ -301,6 +301,6 @@ grep "AVG_ITER_TIME" "$LOG" | tail -1
 
 1. **找不到 `batch_pretrain.sh`**：检查 `/workspace/code/batch_pretrain.sh` 是否存在；如果不存在，应将 agent 预置的 `/workspace/scripts/batch_pretrain.sh` 复制到 `/workspace/code/batch_pretrain.sh` 并添加执行权限。
 2. **找不到 mmpretrain 源码目录**：确认镜像内或挂载目录中存在包含 `configs/` 和 `tools/train.py` 的 mmpretrain 源码目录；必要时设置 `CV_PRE_MMPRE_DIR=/path/to/onedl-mmpretrain`。`onedl-mmcv` 已安装时不需要源码目录。
-3. **数据集路径错误**：检查 `/workspace/datasets/imagenet` 是否包含 ImageNet 数据集；脚本会建立 `onedl-mmpretrain/data/imagenet` 软链接。
+3. **数据集路径错误**：检查 `/workspace/datasets/imagenet` 是否包含 ImageNet 数据集；当前镜像内 `configs/_base_/datasets/imagenet_bs32.py` 应直接从该路径读取。
 4. **没有 `AVG_ITER_TIME`**：确认项目配置已启用 AVG_ITER_TIME 日志输出，且不要直接读取历史最新日志，应使用 `CV_PRE_RUN_MARKER`。
 5. **GPU 数不匹配**：导出 `CV_PRE_NGPU=<card_count>`，并确认容器可见 GPU 数。
