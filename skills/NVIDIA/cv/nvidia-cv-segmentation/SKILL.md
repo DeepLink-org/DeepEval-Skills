@@ -69,7 +69,7 @@ description: NVIDIA GPU 上 CV 语义分割训练性能评测技能。基于 /wo
 
 支持模型：`fcn`、`deeplabv3`、`pspnet`、`apcnet`。
 
-默认权重位于 `/workspace/weight/resnet50_v1c-2cccc1ad.pth`，脚本会将 Cityscapes 数据集链接到 `onedl-mmsegmentation/data/cityscapes`。
+默认权重位于 `/workspace/weight/resnet50_v1c-2cccc1ad.pth`。当前镜像内的 `onedl-mmsegmentation/configs/_base_/datasets/cityscapes.py` 已配置为直接从 `/workspace/datasets/cityscapes` 读取数据集，不需要再创建 `data/cityscapes` 软链接。
 
 ---
 
@@ -78,7 +78,7 @@ description: NVIDIA GPU 上 CV 语义分割训练性能评测技能。基于 /wo
 Docker 镜像：
 
 ```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_segmentation
+registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv
 ```
 
 容器内需要具备 Python 3.10、PyTorch + CUDA、MMEngine、onedl-mmcv、onedl-mmsegmentation。
@@ -118,7 +118,7 @@ docker run --gpus all \
   -v $CV_SEG_DATA_DIR:/workspace/datasets/cityscapes:ro \
   -v $CV_SEG_WEIGHT_DIR:/workspace/weight:ro \
   -v $CV_SEG_LOGS_DIR:/workspace/logs:rw \
-  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_segmentation \
+  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv \
   bash
 ```
 
@@ -161,7 +161,7 @@ GPU_NUM="${CARD_COUNT:-1}"    # 默认使用 task config 的 card_count，未提
 
 **注意**：
 - `batch_segmentation.sh` 可直接放在 `/workspace/code/batch_segmentation.sh`；如果运行环境中不存在，则从 agent 预置的 `/workspace/scripts/batch_segmentation.sh` 复制到该路径
-- 脚本会自动查找 mmsegmentation 源码目录，并建立 `data/cityscapes -> /workspace/datasets/cityscapes` 软链接
+- 脚本会自动查找 mmsegmentation 源码目录；数据集路径由镜像内 `configs/_base_/datasets/cityscapes.py` 直接指向 `/workspace/datasets/cityscapes`
 - `onedl-mmcv` 已通过 `pip install .` 安装到镜像环境时，不需要提供 `/workspace/code/onedl-mmcv`
 
 ### 步骤 2：执行训练评测
@@ -311,6 +311,6 @@ grep "AVG_ITER_TIME" "$LOG" | tail -1
 1. **找不到 `batch_segmentation.sh`**：检查 `/workspace/code/batch_segmentation.sh` 是否存在；如果不存在，应将 agent 预置的 `/workspace/scripts/batch_segmentation.sh` 复制到 `/workspace/code/batch_segmentation.sh` 并添加执行权限。
 2. **找不到 mmsegmentation 源码目录**：确认镜像内或挂载目录中存在包含 `configs/` 和 `tools/train.py` 的 mmsegmentation 源码目录；必要时设置 `CV_SEG_MMSEG_DIR=/path/to/onedl-mmsegmentation`。`onedl-mmcv` 已安装时不需要源码目录。
 3. **预训练权重加载失败**：检查 `/workspace/weight/resnet50_v1c-2cccc1ad.pth` 是否存在。
-4. **数据集路径错误**：检查 `/workspace/datasets/cityscapes` 是否包含 Cityscapes 数据集；脚本会建立 `onedl-mmsegmentation/data/cityscapes` 软链接。
+4. **数据集路径错误**：检查 `/workspace/datasets/cityscapes` 是否包含 Cityscapes 数据集；当前镜像内 `configs/_base_/datasets/cityscapes.py` 应直接从该路径读取。
 5. **没有 `AVG_ITER_TIME`**：确认项目配置已启用 AVG_ITER_TIME 日志输出，且不要直接读取历史最新日志，应使用 `CV_SEG_RUN_MARKER`。
 6. **GPU 数不匹配**：导出 `CV_SEG_NGPU=<card_count>`，并确认容器可见 GPU 数。

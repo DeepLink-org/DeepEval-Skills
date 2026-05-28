@@ -47,10 +47,6 @@ fi
 export NCCL_NVLS_ENABLE="${NCCL_NVLS_ENABLE:-0}"
 
 mkdir -p "$CV_PRE_LOGS_DIR"
-if [ -d "$CV_PRE_DATA_DIR" ]; then
-    mkdir -p data
-    ln -sfn "$CV_PRE_DATA_DIR" data/imagenet
-fi
 
 model_config() {
     case "$1" in
