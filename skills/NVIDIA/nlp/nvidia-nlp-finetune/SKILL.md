@@ -41,7 +41,7 @@ registry.h.pjlab.org.cn/ailab-sys-sys_gpu/tiddler:nvidia-nlp-finetune
 - **MODEL_DIR** 需要外部提供，挂载预训练模型权重目录（HuggingFace 格式）
 - **DATASET_DIR** 需要外部提供，挂载微调数据集目录
 - **CODE_DIR** 需要外部提供，挂载 alpaca_finetune 训练代码目录。`finetune.sh` 在 `$CODE_DIR/alpaca-lora/` 下执行：LoRA 权重输出到 `$CODE_DIR/alpaca-lora/lora-adapter/`，训练日志写入 `$CODE_DIR/alpaca-lora/finetune_128_4_closeint8.log`（batch size = 128，micro batch size = 4）
-- **RESULTS_DIR** 需要外部提供，挂载评测结果目录。所有结构化产物（metrics、状态汇总）以 `result.json` 形式写入此目录，供上层 mcp__agent 拉取与展示
+- **RESULTS_DIR** 需要外部提供，挂载评测结果目录。所有结构化产物（metrics、状态汇总）以 `result.json` 形式写入此目录,供上层 agent 拉取与展示
 - **LOGS_DIR** 需要外部提供，挂载日志目录。训练日志、`stdout`/`stderr` 重定向、容器内异常堆栈等运行期文本均写入此目录，便于事后排查
 - 表格中的"映射目录"列指明了容器启动时 `-v` 参数的挂载路径，即宿主机路径映射到容器内的路径
 
