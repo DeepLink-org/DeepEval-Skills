@@ -1,215 +1,384 @@
 ---
-name: h200-nlp-inference
-description: "NVIDIA H200 GPU 上 NLP 大语言模型(LLM,纯文本输入输出)基于 sglang 的服务化推理评测技能。用于指导 executor 完成模型服务启动、压测脚本执行、日志采集和性能结果分析。支持多模型(DeepSeek-R1 / ChatGLM3-6B-32K …),通过 MODEL_NAME 环境变量切换,新增模型只需增加一个 config 文件。"
+name: nvidia-nlp-inference
+description: NVIDIA GPU 上基于 sglang 的 DeepSeek 文本推理评测技能。用于指导 executor 完成容器启动、模型服务启动、压测脚本执行、推理日志采集与吞吐/延迟指标分析。
 ---
 
-# NVIDIA H200 NLP 推理专家
-
-## 适用范围
-
-- **硬件**:NVIDIA H200 GPU(默认 8 卡张量并行,可覆盖)
-- **模型类别**:**NLP 大语言模型**,纯文本输入输出(decoder-only / encoder-decoder 的文本生成模型)
-- **推理栈**:sglang 服务化推理(`sglang.launch_server` + `sglang.bench_serving`)
-- **典型模型**:DeepSeek-R1、ChatGLM3、Qwen、Llama 等
-
-**不适用**:多模态(VL/audio)、CV 分类/检测/分割、embedding/rerank 等非文本生成场景 —— 请分别走 `h200-cv-*` 等姊妹 skill。
+# nvidia-nlp-inference
 
 ## 触发条件
 
-当用户说以下任意内容时启动(关键信号:**H200 硬件** + **NLP 大语言模型** + **sglang / 推理评测** 意图):
-- "在 H200 上跑 `<NLP 模型>` 的推理评测"(`<NLP 模型>` 指 LLM,如 DeepSeek-R1、ChatGLM3、Qwen,下同)
-- "在 H200 上用 sglang 启动 `<NLP 模型>` 推理服务并压测"
-- "用 sglang.bench_serving 在 H200 上测 `<NLP 模型>` 的吞吐/时延"
-- "在 H200 上评测 `<NLP 模型>` 的服务化推理性能"
+当用户说以下任意内容时启动：
+- "我要在 nvidia 上跑 DeepSeek 推理"
+- "帮我测试 sglang 推理性能"
+- "在 nvidia 上压测 DeepSeek-R1"
+- "帮我启动 sglang 服务并跑 bench_serving"
+- "采集 DeepSeek-R1 推理吞吐"
 
-如果用户请求的模型不在 `scripts/configs/` 已有列表中,先按 "如何添加新的 NLP 模型" 一节建立对应 config,再进入执行流程。如果用户请求的是非 NLP 场景(例如图像模型),不要启动本 skill,提示切换到对应的 CV/多模态 skill。
+## 硬件要求
 
----
+- 1 节点，8 张 NVIDIA GPU（与 `sglang.launch_server --tp 8` 对齐）
+- 足够显存支撑 DeepSeek-R1 服务化推理与压测
 
-**基础目录配置**:
-- 模型权重目录:`/data/models`(部分模型例外,见下方模型表)
-- 数据集目录:`/data/datasets`
-- 日志与压测结果默认输出到脚本执行目录下的日期子目录或 `logs/` 目录
+## 依赖要求
 
----
+**Docker 镜像**：
+```bash
+registry.h.pjlab.org.cn/ailab-sys/sglang:nightly-dev-20251208-5e2cda61
+```
 
-### 支持的 NLP 模型
-
-本 skill 通过 `scripts/configs/<model_name>.sh` 描述每个 NLP 模型的参数,由 `serve.sh` / `test.sh` 在运行时根据 `MODEL_NAME` 环境变量加载。
-
-| MODEL_NAME            | Docker 镜像                                  | 模型路径                                                                                             | 默认 TP |
-|-----------------------|----------------------------------------------|------------------------------------------------------------------------------------------------------|---------|
-| `deepseek-r1-0528`    | `sglang:nightly-dev-20251208-5e2cda61`       | `/data/models/models--deepseek-ai--DeepSeek-R1-0528/snapshots/4236a6af538feda4548eca9ab308586007567f52` | 8       |
-| `chatglm3-6b-32k`     | `chatglm3_image`                             | `glm/models/chatglm3-6b-32k`                                                                         | 8       |
-
-**默认模型**:`deepseek-r1-0528`(省略 `MODEL_NAME` 时使用)。
-
-**当前支持任务**:
-- **NLP 模型服务启动**:使用 `sglang.launch_server` 拉起文本生成服务(OpenAI 兼容 HTTP API)
-- **推理性能压测**:使用 `sglang.bench_serving` 发起并发文本生成请求,测吞吐与时延
-
-**硬件要求**:
-- 8 张 NVIDIA H200 GPU(默认 `--tp 8`,可通过 `TP` 环境变量覆盖)
-- 足够显存支撑所选 NLP 模型的服务化推理与压测
-
----
-
-### 依赖要求
-
-需要安装并可直接调用以下 Python 模块:
-
+容器内已预装 sglang 及相关依赖，可直接调用：
 ```bash
 python3 -m sglang.launch_server
 python3 -m sglang.bench_serving
 ```
 
-压测脚本默认启用:
+## 环境变量
+
+### 环境变量定义
+
+| 环境变量 | 映射目录 | 是否必需 | 说明 |
+|---------|----------|----------|------|
+| `MODEL_DIR` | `/data/models` | 是 | 模型权重根目录，存放 DeepSeek-R1 权重（HuggingFace Hub 缓存布局） |
+| `DATASET_DIR` | `/data/datasets` | 是 | 压测数据集目录，存放 `ShareGPT_V3_unfiltered_cleaned_split.json` |
+| `CODE_DIR` | `/workspace/code` | 否 | 推理相关脚本/代码目录（如有自定义脚本可挂载；默认可不挂载，直接使用容器内命令） |
+| `RESULTS_DIR` | `/workspace/results` | 是 | 评测结果目录，存放 metrics 汇总文件 `result.json`（由步骤 4 的指标采集脚本生成） |
+| `LOGS_DIR` | `/workspace/logs` | 是 | 日志目录，存放服务日志（`serve.log`）、压测日志（`bench.log`）与压测结果 csv（`bench.csv`） |
+
+**说明**：
+- **MODEL_DIR** 需要外部提供，挂载预训练模型权重根目录（HuggingFace 格式）
+- **DATASET_DIR** 需要外部提供，挂载压测数据集目录
+- **CODE_DIR** 可选，若用户有自定义 serve / bench 脚本可通过此目录挂载；本 skill 默认直接调用容器内 `python3 -m sglang.*` 命令，无需挂载代码目录
+- **RESULTS_DIR** 需要外部提供，挂载评测结果目录。所有结构化产物（metrics、状态汇总）以 `result.json` 形式写入此目录
+- **LOGS_DIR** 需要外部提供，挂载日志目录。`sglang.launch_server` 与 `sglang.bench_serving` 的 `stdout`/`stderr` 重定向、压测 csv、容器内异常堆栈等运行期文本均写入此目录，便于事后排查
+- 表格中的"映射目录"列指明了容器启动时 `-v` 参数的挂载路径，即宿主机路径映射到容器内的路径
+
+**目录结构说明**：
+
+- `$MODEL_DIR`: 模型权重目录，采用 HuggingFace Hub 缓存布局，典型结构如下：
+  ```
+  $MODEL_DIR/                                              # 例如 /data/models
+    ├── blobs/                                           # 实际权重文件（哈希命名）
+    ├── refs/                                            # 分支/标签引用
+    └── snapshots/                                       # 各 commit 快照（软链至 blobs/）
+        └── 4236a6af538feda4548eca9ab308586007567f52/    # 当前使用的 commit 快照
+            ├── config.json
+            ├── tokenizer.json
+            ├── tokenizer_config.json
+            ├── model-00001-of-000xx.safetensors
+            ├── ...SS
+            └── model.safetensors.index.json
+  ```
+
+  **注意**：`sglang.launch_server --model-path` 必须指向具体的 snapshot 子目录（即 `$MODEL_DIR/models--deepseek-ai--DeepSeek-R1-0528/snapshots/<commit_hash>`），而非 `$MODEL_DIR` 本身。`snapshots/` 下可能存在多个 commit 版本，按需选择。
+
+- `$DATASET_DIR`: 数据集目录，典型结构如下：
+  ```
+  $DATASET_DIR/
+  └── ShareGPT_V3_unfiltered_cleaned_split.json   # bench_serving 默认 sharegpt 数据集
+  ```
+
+- `$RESULTS_DIR`: 评测结果目录，典型结构如下：
+  ```
+  $RESULTS_DIR/
+  └── result.json   # 指标采集脚本生成的结构化结果（{"status": "success", "metrics": {...}}）
+  ```
+
+  **注意**：内容由步骤 4 的指标采集脚本写入；上层 mcp__agent 会从该路径（容器内 `/workspace/results/result.json`）读取或从脚本 stdout 解析 metrics。
+
+- `$LOGS_DIR`: 日志目录，典型结构如下：
+  ```
+  $LOGS_DIR/
+  ├── serve.log    # sglang.launch_server 的 stdout/stderr（步骤 2 通过 tee 写入）
+  ├── bench.log    # sglang.bench_serving 的 stdout/stderr（步骤 3 通过 tee 写入）
+  └── bench.csv    # sglang.bench_serving 的结构化结果输出（--output-file 指定）
+  ```
+
+  **注意**：步骤 4 的指标采集脚本默认从 `/workspace/logs/bench.log` 中提取性能汇总行；若改了 `tee` 路径，需同步更新脚本中的 `log_path`。
+
+**注意**：
+- 必需的参数（`MODEL_DIR`、`DATASET_DIR`、`RESULTS_DIR`、`LOGS_DIR`）必须提供
+- 容器内路径已通过卷挂载固定，对应 `docker run` 命令中的 `-v` 参数
+- 宿主机路径建议存放在大容量磁盘上，避免占用系统盘空间
+
+## 执行流程
+
+### 步骤 1：容器启动
+
+**挂载权限约定**：
+- `:ro` — 只读，用于输入数据（模型权重、数据集等），防止误修改
+- `:rw` — 读写，用于输出目录（日志、压测结果、metrics 汇总等）
+
+**完整启动命令**：
 
 ```bash
-TRANSFORMERS_OFFLINE=1
+docker run -it \
+  --name sglang_inference \
+  --gpus all \
+  --shm-size=128g \
+  -v $MODEL_DIR:/data/models:ro \
+  -v $DATASET_DIR:/data/datasets:ro \
+  -v $RESULTS_DIR:/workspace/results:rw \
+  -v $LOGS_DIR:/workspace/logs:rw \
+  registry.h.pjlab.org.cn/ailab-sys/sglang:nightly-dev-20251208-5e2cda61 \
+  bash
 ```
 
-各模型的 `--trust-remote-code` 等专属 flag 由 config 的 `EXTRA_SERVE_ARGS` 承载。
+**注意**：
+- 所有大文件路径通过 `MODEL_DIR`、`DATASET_DIR` 环境变量提供，避免命令中硬编码
+- 若已存在同名容器，先执行 `docker rm -f sglang_inference`
+- `--shm-size=128g`：避免大吞吐推理时共享内存不足；若仍报错，可适当增大
+- 使用 **交互式** `-it` 进入 `bash`，便于在同一终端内执行后续步骤；如需后台常驻可改为 `-d` 并配合 `docker exec`
+- 如有自定义脚本目录，可追加 `-v $CODE_DIR:/workspace/code:rw`
 
----
+#### 容器管理命令
 
-### 使用方式
-
-**服务启动**:
+**进入已创建的容器**：
 ```bash
-# DeepSeek-R1(默认,等价于 MODEL_NAME=deepseek-r1-0528)
-bash scripts/serve.sh
+# 如果容器已在运行
+docker exec -it sglang_inference /bin/bash
 
-# ChatGLM3-6B-32K
-MODEL_NAME=chatglm3-6b-32k bash scripts/serve.sh
+# 如果容器已停止，先启动再进入
+docker start sglang_inference
+docker exec -it sglang_inference /bin/bash
 ```
 
-**压测**:
+**验证容器环境**：
 ```bash
-# 压测默认模型
-bash scripts/test.sh
+# 检查 GPU 设备
+nvidia-smi
 
-# 压测 ChatGLM3,并指定 HOST
-MODEL_NAME=chatglm3-6b-32k HOST=10.0.0.5 bash scripts/test.sh
+# 检查挂载的目录
+ls -lh /data/models/snapshots/
+ls -lh /data/datasets/
+
+# 检查 sglang 是否可用
+python3 -m sglang.launch_server --help | head -5
+python3 -m sglang.bench_serving --help | head -5
 ```
 
-**常用覆盖项**(环境变量,优先级高于 config):
-- `TP` / `PORT` — 改并行度和端口
-- `MODEL_PATH` — 临时指向另一份权重
-- `HOST` — 压测时指定推理服务暴露的 IP(默认 `127.0.0.1`)
-- `RANDOM_INPUT_LEN` / `RANDOM_OUTPUT_LEN` / `NUM_PROMPTS` / `SEED` — 压测负载参数
+### 步骤 2：启动模型服务
 
----
-
-### Docker 运行命令
-
-按所选模型选择对应镜像。通用模板:
+在容器内启动 `sglang.launch_server`，对 DeepSeek-R1 进行 8 卡张量并行推理服务化：
 
 ```bash
-docker run -d --gpus all --shm-size=100g \
-  -v /data/models:/data/models \
-  -v /data/datasets:/data/datasets \
-  -v /workspace/results:/workspace/results \
-  -v /workspace/tmp:/workspace/tmp \
-  -v /workspace/logs:/workspace/logs \
-  <IMAGE>
+mkdir -p /workspace/logs
+
+# 后台启动 sglang 服务（推荐，便于在同一 shell 内继续执行压测）
+nohup python3 -m sglang.launch_server \
+  --model-path /data/models/snapshots/4236a6af538feda4548eca9ab308586007567f52 \
+  --tp 8 \
+  --host 0.0.0.0 \
+  --port 30000 \
+  --trust-remote-code \
+  > /workspace/logs/serve.log 2>&1 &
+
+echo $! > /workspace/logs/serve.pid
 ```
 
-- **DeepSeek-R1**:`IMAGE=sglang:nightly-dev-20251208-5e2cda61`
-- **ChatGLM3-6B-32K**:`IMAGE=chatglm3_image`(该镜像的模型路径不在 `/data/models` 下,需要确保 `glm/models/chatglm3-6b-32k` 在容器内可访问)
-
----
-
-### 服务启动脚本
-
-脚本位置:`scripts/serve.sh`
-
-当前默认行为:
-- 根据 `MODEL_NAME` 加载 `scripts/configs/${MODEL_NAME}.sh`
-- 创建 `logs/` 目录
-- 启动 `sglang.launch_server --model <config> --tp <config> --port <config> <EXTRA_SERVE_ARGS>`
-- 输出日志到:`./logs/serve_${MODEL_NAME}.log`
-- `MODEL_NAME` 对应 config 不存在时会打印可用列表并非零退出
-
----
-
-### 压测脚本
-
-脚本位置:`scripts/test.sh`
-
-当前默认行为:
-- 根据 `MODEL_NAME` 加载相同 config(保证和 serve 一致的 `MODEL_PATH`、`PORT`)
-- 默认 host `127.0.0.1`、input/output 各 2048、2000 个 prompts
-- 结果输出到 `${YYYYMMDD}/speed_in<IN>_out<OUT>_n<N>_${MODEL_NAME}.csv` 和同名 `.log`
-- `HOST` 若推理服务在其他节点或容器网络上,需要根据实际暴露 IP 调整
-
----
-
-### 关键性能指标
-
-压测日志末尾会输出性能汇总，例如：
-
-```text
-Total token throughput (tok/s):          8324.38
-Concurrency:                             1189.77
-Mean E2E Latency (ms):                   585426.75
-Mean TTFT (ms):                          376538.75
-Mean TPOT (ms):                          102.05
-Mean ITL (ms):                           102.05
+**等待服务就绪**（关键，必须等到出现 ready 标志才能进入步骤 3）：
+```bash
+# 监听 serve.log，直到出现 "The server is fired up and ready to roll!" 之类的就绪标志
+tail -F /workspace/logs/serve.log | grep -m1 -E "fired up and ready|server.*ready|listening"
 ```
 
-关注以下指标：
+**输出产物**：
+
+| 文件 / 目录 | 容器内路径 | 描述 |
+| :--- | :--- | :--- |
+| `serve.log` | `/workspace/logs/serve.log` | 服务启动日志，含模型加载、KV-cache 分配、监听端口等信息 |
+| `serve.pid` | `/workspace/logs/serve.pid` | 服务进程 PID，便于步骤 3 完成后停止服务 |
+
+**注意**：
+- 若模型版本切换，需同步修改 `--model-path` 中的 `snapshots/<commit_hash>`
+- 若 GPU 数量改变，`--tp` 必须同步调整，并与步骤 4 指标采集脚本中的 `nproc` 对齐
+- 默认监听 `0.0.0.0:30000`，与步骤 3 压测脚本的 `HOST` / `PORT` 默认值一致
+
+### 步骤 3：执行压测
+
+服务就绪后，使用 `sglang.bench_serving` 对其发起压测：
+
+```bash
+HOST=${HOST:-127.0.0.1}
+PORT=${PORT:-30000}
+INPUT_LEN=${INPUT_LEN:-2048}
+OUTPUT_LEN=${OUTPUT_LEN:-2048}
+NUM_PROMPTS=${NUM_PROMPTS:-2000}
+
+python3 -m sglang.bench_serving \
+  --model /data/models/models--deepseek-ai--DeepSeek-R1-0528/snapshots/4236a6af538feda4548eca9ab308586007567f52 \
+  --random-range-ratio 1 \
+  --backend sglang \
+  --dataset-name random \
+  --dataset-path /data/datasets/ShareGPT_V3_unfiltered_cleaned_split.json \
+  --random-input-len "${INPUT_LEN}" \
+  --random-output-len "${OUTPUT_LEN}" \
+  --num-prompts "${NUM_PROMPTS}" \
+  --host "${HOST}" \
+  --port "${PORT}" \
+  --output-file /workspace/logs/bench.csv \
+  --seed 42 2>&1 | tee /workspace/logs/bench.log
+```
+
+**输出产物**：
+
+| 文件 / 目录 | 容器内路径 | 描述 |
+| :--- | :--- | :--- |
+| `bench.log` | `/workspace/logs/bench.log` | 压测日志，末尾含性能汇总（吞吐 / 延迟） |
+| `bench.csv` | `/workspace/logs/bench.csv` | 压测结构化结果，bench_serving 自身写入 |
+
+**验证压测结果**：
+```bash
+# 查看压测日志末尾汇总
+tail -50 /workspace/logs/bench.log
+
+# 检查 csv 结果
+head -2 /workspace/logs/bench.csv
+```
+
+**注意**：
+- **不要修改** `INPUT_LEN`、`OUTPUT_LEN`、`NUM_PROMPTS` 默认值，否则与基线指标不可比
+- 默认 `HOST=127.0.0.1`、`PORT=30000`，与步骤 2 服务监听地址保持一致；若服务运行在其他节点上，按实际 IP 调整 `HOST`
+- 压测完成后建议停止服务：`kill $(cat /workspace/logs/serve.pid)`
+
+### 步骤 4：指标采集
+
+压测完成后，`bench.log` 末尾会出现性能汇总（由 `sglang.bench_serving` 在压测结束时打印），所有性能指标均从该段提取：
+
+```
+============ Serving Benchmark Result ============
+...
+Output token throughput (tok/s):         0
+Total token throughput (tok/s):          0
+Concurrency:                             0
+Mean E2E Latency (ms):                   0
+Mean TTFT (ms):                          0
+Mean TPOT (ms):                          0
+Mean ITL (ms):                           0
+==================================================
+```
+
+#### 关键性能指标
 
 | 类型 | 指标 | 说明 |
-|---|---|---|
-| 性能（必采） | `Output token throughput (tok/s)` | 输出 token 吞吐，核心吞吐指标 |
+|------|------|------|
+| 性能（必采） | `Output token throughput (tok/s)` | 输出 token 总吞吐，核心吞吐指标（全局聚合） |
+| 性能（必采） | `output_tokens_per_sec_per_gpu` | 单卡输出吞吐 = `Output token throughput / tp`（默认 8） |
+| 性能（辅助） | `Total token throughput (tok/s)` | 输入 + 输出 token 总吞吐 |
 | 性能（辅助） | `Mean TTFT (ms)` | 首 token 平均延迟 |
 | 性能（辅助） | `Mean TPOT (ms)` | 每输出 token 平均延迟（不含首 token） |
 | 性能（辅助） | `Mean ITL (ms)` | 平均 token 间延迟 |
 | 性能（辅助） | `Mean E2E Latency (ms)` | 端到端平均延迟 |
-| 性能（辅助） | `Concurrency` | 并发数 |
+| 性能（辅助） | `Concurrency` | 实际并发数 |
 
-**采集命令**（将 `LOG` 替换为实际日志路径，如 `/workspace/logs/bench.log`）：
+#### 指标采集方法
+
+**Python 脚本提取**
+
+脚本职责：
+1. 从 `bench.log` 中提取性能汇总段（含 `Output token throughput`、`Mean TTFT` 等字段）
+2. 计算 `output_tokens_per_sec_per_gpu`（输出吞吐 / tp）
+3. 把 metrics 写入 `/workspace/results/result.json`（`{"status": "success", "metrics": {...}}` 格式）
+4. 同时把 `result.json` 的内容回显到 stdout（前缀 `result.json: `），供 mcp__agent 从标准输出解析
 
 ```bash
-# 核心：Output token throughput
-grep "Output token throughput" "$LOG" | awk '{print $5, $6}'
+python3 - <<'EOF'
+import json
+import os
+import re
 
-# 辅助：TTFT
-grep "Mean TTFT" "$LOG" | awk '{print $4, $5}'
+log_path    = '/workspace/logs/bench.log'
+result_path = '/workspace/results/result.json'
+tp          = 8  # 与步骤 2 中 sglang.launch_server --tp 保持一致
 
-# 辅助：TPOT
-grep "Mean TPOT" "$LOG" | awk '{print $4, $5}'
+with open(log_path) as f:
+    text = f.read()
 
-# 辅助：ITL
-grep "Mean ITL" "$LOG" | awk '{print $4, $5}'
+def grab(pattern, cast=float):
+    """抓取最后一次匹配（避免被中间日志干扰），返回 cast 后的值或 None。"""
+    matches = re.findall(pattern, text)
+    if not matches:
+        return None
+    return cast(matches[-1])
+
+metrics_raw = {
+    'output_token_throughput': grab(r'Output token throughput \(tok/s\):\s+([\d.]+)'),
+    'total_token_throughput':  grab(r'Total token throughput \(tok/s\):\s+([\d.]+)'),
+    'concurrency':             grab(r'Concurrency:\s+([\d.]+)'),
+    'mean_e2e_latency_ms':     grab(r'Mean E2E Latency \(ms\):\s+([\d.]+)'),
+    'mean_ttft_ms':            grab(r'Mean TTFT \(ms\):\s+([\d.]+)'),
+    'mean_tpot_ms':            grab(r'Mean TPOT \(ms\):\s+([\d.]+)'),
+    'mean_itl_ms':             grab(r'Mean ITL \(ms\):\s+([\d.]+)'),
+}
+
+if metrics_raw['output_token_throughput'] is None:
+    raise SystemExit("未找到压测汇总行（Output token throughput），压测可能未结束或日志被截断")
+
+ottp = metrics_raw['output_token_throughput']
+
+metrics = {
+    'output_token_throughput':       round(ottp, 2),
+    'output_tokens_per_sec_per_gpu': round(ottp / tp, 2),
+    'total_token_throughput':        round(metrics_raw['total_token_throughput'], 2),
+    'concurrency':                   round(metrics_raw['concurrency'], 2),
+    'mean_e2e_latency_ms':           round(metrics_raw['mean_e2e_latency_ms'], 2),
+    'mean_ttft_ms':                  round(metrics_raw['mean_ttft_ms'], 2),
+    'mean_tpot_ms':                  round(metrics_raw['mean_tpot_ms'], 2),
+    'mean_itl_ms':                   round(metrics_raw['mean_itl_ms'], 2),
+}
+
+# 1) 控制台人类可读打印
+print(f"Output token throughput (tok/s)       : {metrics['output_token_throughput']:.2f}")
+print(f"output_tokens_per_sec_per_gpu ({tp} GPUs) : {metrics['output_tokens_per_sec_per_gpu']:.2f}")
+print(f"Total token throughput (tok/s)        : {metrics['total_token_throughput']:.2f}")
+print(f"Concurrency                           : {metrics['concurrency']:.2f}")
+print(f"Mean E2E Latency (ms)                 : {metrics['mean_e2e_latency_ms']:.2f}")
+print(f"Mean TTFT (ms)                        : {metrics['mean_ttft_ms']:.2f}")
+print(f"Mean TPOT (ms)                        : {metrics['mean_tpot_ms']:.2f}")
+print(f"Mean ITL (ms)                         : {metrics['mean_itl_ms']:.2f}")
+
+# 2) 写入 /workspace/results/result.json
+os.makedirs(os.path.dirname(result_path), exist_ok=True)
+result = {'status': 'success', 'metrics': metrics}
+with open(result_path, 'w', encoding='utf-8') as f:
+    json.dump(result, f, ensure_ascii=False, indent=2)
+
+# 3) 把 result.json 内容回显到 stdout（必须与文件路径在同一行，
+#    便于上层 mcp__agent 通过 "result.json" 关键字 + {...} 正则提取）
+print(f"result.json: {json.dumps(result, ensure_ascii=False)}")
+EOF
 ```
 
----
+**输出示例**（基于上方样例日志）：
+```
+Output token throughput (tok/s)       : 0
+output_tokens_per_sec_per_gpu (8 GPUs) : 0
+Total token throughput (tok/s)        : 0
+Concurrency                           : 0
+Mean E2E Latency (ms)                 : 0
+Mean TTFT (ms)                        : 0
+Mean TPOT (ms)                        : 0
+Mean ITL (ms)                         : 0
+result.json: {"status": "success", "metrics": {"output_token_throughput": 0, "output_tokens_per_sec_per_gpu": 0, "total_token_throughput": 0, "concurrency": 0, "mean_e2e_latency_ms": 0, "mean_ttft_ms": 0, "mean_tpot_ms": 0, "mean_itl_ms": 0}}
+```
 
-### 常见问题
+**结果文件**（`/workspace/results/result.json`）：
+```json
+{
+  "status": "success",
+  "metrics": {
+    "output_token_throughput": 0,
+    "output_tokens_per_sec_per_gpu": 0,
+    "total_token_throughput": 0,
+    "concurrency": 0,
+    "mean_e2e_latency_ms": 0,
+    "mean_ttft_ms": 0,
+    "mean_tpot_ms": 0,
+    "mean_itl_ms": 0
+  }
+}
+```
 
-1. **服务无法启动**
-   - 检查 `MODEL_NAME` 对应 config 中的 `MODEL_PATH` 是否存在
-   - 检查 `sglang` 是否已正确安装(所选镜像应自带)
-   - 检查 GPU 数量是否满足 `--tp <TP>`(默认 8)
-
-2. **压测连接失败**
-   - 检查 `serve.sh` 是否已成功启动服务(对应端口是否在监听)
-   - 检查 `test.sh` 的 `HOST` / `PORT` 是否与服务实际地址一致
-   - 如服务运行在其他节点或容器网络上,通过 `HOST=...` 覆盖
-
-3. **`Unknown MODEL_NAME=xxx`**
-   - 脚本会列出 `scripts/configs/` 下可用的配置名,核对拼写
-   - 如果是新模型,按 "如何添加新的 NLP 模型" 一节增加 config 文件
-
-4. **找不到模型或数据集**
-   - 确认 docker 挂载和 config 中的路径一致
-   - ChatGLM3 的模型路径不在 `/data/models` 下,注意容器内可访问性
-
-5. **日志或结果文件未生成**
-   - 检查当前目录写权限
-   - 检查日期目录和 `logs/` 目录是否创建成功
-
-6. **性能异常波动**
-   - 检查请求长度、并发设置和服务负载是否稳定
+**注意**：
+- 必须等待压测完成（`bench.log` 末尾出现 `Output token throughput` 汇总行）才能采集，否则正则会无输出
+- 切换 `--tp` 后，需将脚本中的 `tp` 同步调整为步骤 2 `sglang.launch_server` 的实际值
+- 如改动了 `tee` 输出路径，需同步更新 `log_path`
