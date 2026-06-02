@@ -20,16 +20,16 @@ description: NVIDIA GPU 上语音识别模型推理性能评测技能。支持 S
 | 环境变量 | 映射目录 | 是否必需 | 说明 |
 |---------|----------|----------|------|
 | `ASR_PROJECT_ROOT` | `/workspace` | 否 | 项目根目录，需外部提供，模型文件所在目录 |
-| `ASR_MODEL_CKPT_DIR` | `/workspace/models/speech_recognition` | 是 | 模型检查点目录，存放模型权重文件 |
-| `ASR_DATA_DIR` | `/workspace/datasets/speech_recognition` | 是 | Aishell-1 等数据集目录，存放 lmdb 格式数据 |
-| `ASR_CONFIG_DIR` | `/workspace/config/` | 是 | 配置文件目录，包含 data_set.cfg |
+| `ASR_MODEL_CKPT_DIR` | `/workspace/models` | 是 | 模型检查点目录，存放speech_recognition场景下的模型权重文件 |
+| `ASR_DATA_DIR` | `/workspace/datasets` | 是 | 包含speech_recognition场景下的数据集，具体包含Aishell-1 等数据集目录，存放 lmdb 格式数据 |
+| `ASR_CONFIG_DIR` | `/workspace/config` | 是 | 配置文件目录，包含 data_set.cfg |
 | `ASR_INFERENCE_OUTPUT` | `/workspace/results/${MODEL_NAME}` | 否 | 推理结果输出目录 |
 | `ASR_LOGS_DIR` | `/workspace/logs/${MODEL_NAME}` | 否 | 日志输出目录 |
 
 **说明**：
 - **ASR_PROJECT_ROOT** 不需要外部提供，镜像中已包含所有推理代码和相关工具
 - **ASR_MODEL_CKPT_DIR** 需要外部提供，存放 SenseVoiceSmall 模型权重文件
-- **ASR_DATA_DIR** 需要外部提供，存放预处理后的数据集，当前包含 Aishell-1 数据集
+- **ASR_DATA_DIR** 需要外部提供，存放预处理后的数据集，包含speech_recognition场景下的数据集
 - **ASR_CONFIG_DIR** 需要外部提供，存放 data_set.cfg 数据集路径配置文件
 - 其他环境变量可根据需要自定义提供
 
@@ -61,12 +61,17 @@ description: NVIDIA GPU 上语音识别模型推理性能评测技能。支持 S
   │           ├── chn_jpn_yue_eng_ko_spectok.bpe.model  # 多语言BPE分词模型 (中/日/粤/英/韩)
   │           ├── example/                  # 示例音频文件
   │           └── fig/                      # 模型架构示意图
-  ├── datasets/
-  │   └── speech_recognition/               # = ASR_DATA_DIR
+  ├── datasets/                             # = ASR_DATA_DIR
+  │   └── speech_recognition/               # 语音识别，总共 28 个数据集
   │       ├── aishell1/                     # Aishell-1 中文语音识别数据集
   │       │   ├── data_0.lmdb               # LMDB 格式数据分片 0
   │       │   ├── data_1.lmdb               # LMDB 格式数据分片 1
   │       │   └── meta.json                 # 数据集元信息
+  │       ├── librispeech-test-clean/        # LibriSpeech test-clean 英文语音识别数据集
+  │       ├── librispeech-test-other/        # LibriSpeech test-other 英文语音识别数据集
+  │       ├── fleurs-cmn/                   # FLEURS 中文（普通话）语音识别数据集
+  │       ├── fleurs-en/                    # FLEURS 英文语音识别数据集
+  │       └── ...
   ├── src/                                  # 评测框架源码
   ├── eval/                                 # 评测启动脚本
   ├── tests/                                # 测试用例
@@ -96,9 +101,13 @@ description: NVIDIA GPU 上语音识别模型推理性能评测技能。支持 S
 - `SenseVoiceSmall`: 阿里达摩院发布的多语言语音识别模型，支持中/日/粤/英/韩五种语言的语音识别能力
 
 **当前支持任务**：
-- 基于 Aishell-1 数据集的语音识别模型推理与性能测试
+- 基于语音识别数据集的语音识别模型推理与性能测试
 - 性能评估：CER（字符错误率）、WER（词错误率）
 - 吞吐性能：`avg_inference_time`（平均推理时间/样本）
+
+**当前支持的数据集**：
+语音识别任务总共支持 28 个数据集
+aishell1、fleurs-ar、fleurs-cmn、fleurs-de、fleurs-en、fleurs-es、fleurs-fr、fleurs-hi、fleurs-it、fleurs-ja、fleurs-ko、fleurs-pt、fleurs-ru、fleurs-th、fleurs-vi、fleurs-yue、kespeech-beijing、kespeech-ji-lu、kespeech-jiang-huai、kespeech-jiao-liao、kespeech-lan-yin、kespeech-mandarin、kespeech-northeastern、kespeech-southwestern、kespeech-zhongyuan、librispeech-test-clean、librispeech-test-other、speech_asr_aishell1_testsets
 
 **硬件要求**：
 - 1 张 NVIDIA GPU
@@ -110,7 +119,7 @@ description: NVIDIA GPU 上语音识别模型推理性能评测技能。支持 S
 
 **Docker 镜像**：
 ```bash
-117.48.149.97:5000/eval-test/asr-eval:v2
+117.48.149.97:5000/eval-test/sense-voice-small:gpu-v0.1.0
 ```
 
 容器内已预装：
@@ -132,11 +141,11 @@ docker run -itd \
   --shm-size=128g \
   -e PYTHONUNBUFFERED=1 \
   -v $ASR_CONFIG_DIR:/workspace/config:ro \
-  -v $ASR_MODEL_CKPT_DIR:/workspace/models/speech_recognition:ro \
-  -v $ASR_DATA_DIR:/workspace/datasets/speech_recognition:ro \
+  -v $ASR_MODEL_CKPT_DIR:/workspace/models:ro \
+  -v $ASR_DATA_DIR:/workspace/datasets:ro \
   -v $ASR_INFERENCE_OUTPUT:/workspace/results/${MODEL_NAME}:rw \
   -v $ASR_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \
-  117.48.149.97:5000/eval-test/asr-eval:v2
+  117.48.149.97:5000/eval-test/sense-voice-small:gpu-v0.1.0
 ```
 
 **公共参数说明**：
@@ -176,7 +185,7 @@ nvidia-smi
 ls -lh /workspace/models/speech_recognition/SenseVoiceSmall/model.pt
 
 # 检查数据集
-ls -lh /workspace/datasets/speech_recognition/
+ls -lh /workspace/datasets
 
 # 检查配置文件
 cat /workspace/config/data_set.cfg
@@ -193,13 +202,17 @@ cat /workspace/config/data_set.cfg
 ```bash
 # 选择要测试的模型
 MODEL_NAME="SenseVoiceSmall"  # 可选: SenseVoiceSmall
+DATASET_NAME="kespeech-beijing" # 可选：aishell1、kespeech-beijing等
 cd /workspace
 ```
 
 ### 配置文件说明
 **配置文件关键路径**（`/workspace/config/data_set.cfg`）：
 ```
-speech_recognition: "/workspace/datasets/speech_recognition"
+# SenseVoiceSmall 数据集配置（容器内路径）
+datasets_base: "/workspace/datasets"
+datasets:
+  - kespeech-beijing
 ```
 
 ### 步骤 2：执行推理评测
@@ -210,18 +223,17 @@ speech_recognition: "/workspace/datasets/speech_recognition"
 cd /workspace
 mkdir -p /workspace/logs
 python3 -u /workspace/infer_runner.py \
-  --model_id sensevoice-small \
-  --model_dir /data/models/speech_recognition/${MODEL_NAME} \
+  --model_dir /workspace/models/speech_recognition/${MODEL_NAME} \
   --output_dir /workspace/results/${MODEL_NAME}/predictions/ \
   --acc_report /workspace/results/${MODEL_NAME}/acc_report.json \
-  --data_set /workspace/config/data_set.cfg 2>&1 | tee /workspace/logs/${MODEL_NAME}/test.log
+  --data_set /workspace/config/data_set.cfg \
+  --dataset ${DATASET_NAME}$ 2>&1 | tee /workspace/logs/${MODEL_NAME}/test.log
 ```
 
 上述指令的默认行为：
 - 创建 `/workspace/logs/` 目录
 - 启动 `/workspace/infer_runner.py` 进行推理
-- 指定模型ID：`--model_id sensevoice-small`
-- 指定模型路径：`--model_dir /data/models/speech_recognition/${MODEL_NAME}`
+- 指定模型路径：`--model_dir /workspace/models/speech_recognition/${MODEL_NAME}`
 - 指定结果输出路径：`--output_dir /workspace/results/${MODEL_NAME}/predictions/`
 - 指定准确率报告输出路径：`--acc_report /workspace/results/${MODEL_NAME}/acc_report.json`
 - 指定数据集配置文件：`--data_set /workspace/config/data_set.cfg`
@@ -239,24 +251,24 @@ cat /workspace/results/${MODEL_NAME}/acc_report.json
 
 ### 关键性能指标
 
-在每个数据集测评结束，日志会打印测评结果和测试速度（单位：样本/秒），例如：
+在每个数据集测评结束，日志会打印测评结果、指标和测试速度（单位：样本/秒），例如：
 ```text
-结果保存到: /workspace/results/SenseVoiceSmall/predictions/predictions_aishell1.jsonl
-速度: 12.7 样本/秒
+结果: 265/265 成功
+指标: {'cer': 0.10670493086355336, 'total_edits': 409, 'total_ref_len': 3833, 'substitutions': 347, 'deletions': 15, 'insertions': 47, 'num_samples': 265}
+耗时: 23.4s
 ```
 
 测试日志末尾会输出所有数据集结果汇总：
 
 ```text
-评测数据集数: 5
-  aishell1: cer=0.0402, 样本数=7176
-  librispeech-clean: wer=0.0000, 样本数=0
-  librispeech-other: wer=0.0000, 样本数=0
-  fleurs-cmn: cer=0.0000, 样本数=0
-  fleurs-en: cer=0.0000, 样本数=0
+============================================================
+评测完成!
+============================================================
+评测数据集数: 1
+  kespeech-beijing: {'cer': 0.10670493086355336, 'total_edits': 409, 'total_ref_len': 3833, 'substitutions': 347, 'deletions': 15, 'insertions': 47, 'num_samples': 265}, 样本数=265
 
-acc_report: /workspace/results/acc_report.json
-predictions: /workspace/results/predictions/
+acc_report: /workspace/results/SenseVoiceSmall/acc_report.json
+predictions: /workspace/results/SenseVoiceSmall/predictions/
 ```
 
 其中，`acc_report` 记录了每个数据集的详细性能数据：
@@ -265,27 +277,30 @@ predictions: /workspace/results/predictions/
 {
   "records": [
     {
-      "dataset": "aishell1",
-      "total_samples": 7176,
-      "success_samples": 7176,
-      "error_samples": 0,
-      "total_time": 562.835529088974,
-      "avg_inference_time": 0.07838046932831788,
-      "metrics": {
-        "cer": 0.04018870234182996,
-        "total_edits": 4268,
-        "total_ref_len": 106199
-      },
-      "success_rate": 1.0,
-      "schema_version": "1.0.0",
+      "dataset": "kespeech-beijing",
       "model": "SenseVoiceSmall",
-      "model_type": "asr",
+      "model_type": "recognition",
       "chip": "gpu",
-      "device": "cuda:0 (NVIDIA H200)",
-      "timestamp": "20260507_065251"
+      "device": "cuda (NVIDIA H200)",
+      "total_samples": 265,
+      "success_samples": 265,
+      "error_samples": 0,
+      "success_rate": 1.0,
+      "total_time": 23.38645100593567,
+      "avg_inference_time": 0.08438867924528304,
+      "metrics": {
+        "cer": 0.10670493086355336,
+        "total_edits": 409,
+        "total_ref_len": 3833,
+        "substitutions": 347,
+        "deletions": 15,
+        "insertions": 47,
+        "num_samples": 265
+      },
+      "timestamp": "20260602_030457"
     }
   ],
-  "last_updated": "20260507_065251",
+  "last_updated": "20260602_030457",
   "notes": ""
 }
 ```
@@ -298,6 +313,7 @@ predictions: /workspace/results/predictions/
 | 准确率（必采） | WER | 词错误率，数值越低越好（英文数据集） |
 | 性能（必采） | `avg_inference_time` | 平均每条样本推理时间，核心吞吐指标 |
 | 准确率（辅助） | `success_rate` | 推理成功率 |
+| 总样本数（辅助） | `total_samples` | 总共测试的样本数量 |
 
 **注意**：中文数据集仅有 CER 指标；英文数据集仅有 WER 指标
 
@@ -308,8 +324,39 @@ predictions: /workspace/results/predictions/
 ```
 python3 -c "
 import json
-path='/workspace/results/${MODEL_NAME}/acc_report.json'
-print(json.dumps(json.load(open(path, 'r', encoding='utf-8')), indent=2, ensure_ascii=False))"
+import sys
+import os
+
+result_path='/workspace/results/${MODEL_NAME}'
+try:
+    with open(os.path.join(result_path, 'acc_report.json'), 'r', encoding='utf-8') as f:
+        acc = json.load(f)
+    result = []
+    for record in acc.get('records', []):
+        metrics = record.get('metrics', {})
+
+        result.append(
+            {
+                'dataset': record.get('dataset', ''),
+                'avg_inference_time': record.get('avg_inference_time', 0),
+                'success_rate': record.get('success_rate', 0),
+                'total_samples': record.get('total_samples', 0),
+                'cer': metrics.get('cer'),
+                'wer': metrics.get('wer'),
+            }
+        )
+
+    print(result)
+    with open(os.path.join(result_path, 'result.json'), 'w', encoding='utf-8') as out:
+        json.dump(result, out, indent=2, ensure_ascii=False)
+    print('result.json written successfully.')
+except Exception as e:
+    result = {'status': 'error', 'message': str(e)}
+    with open(os.path.join(result_path, 'result.json'), 'w', encoding='utf-8') as out:
+        json.dump(result, out, indent=2, ensure_ascii=False)
+    print(f'Error writing result.json: {e}', file=sys.stderr)
+    sys.exit(1)
+"
 ```
 
 ---
@@ -319,7 +366,7 @@ print(json.dumps(json.load(open(path, 'r', encoding='utf-8')), indent=2, ensure_
 1. **Docker 容器启动失败**
    - **容器名已存在**：确认不存在同名容器 `docker rm -f asr-eval`
    - **GPU 不可用**：确认宿主机上 `nvidia-smi` 正常，GPU 驱动已安装
-   - **镜像未拉取**：确认镜像 `117.48.149.97:5000/eval-test/asr-eval:v2` 已 pull 到本地
+   - **镜像未拉取**：确认镜像 `117.48.149.97:5000/eval-test/sense-voice-small:gpu-v0.1.0` 已 pull 到本地
    - **共享内存不足**：如遇到内存错误，可增加 `--shm-size` 参数值（如 `256g`）
 
 2. **容器内找不到 GPU 设备**
@@ -328,7 +375,7 @@ print(json.dumps(json.load(open(path, 'r', encoding='utf-8')), indent=2, ensure_
 
 3. **测试无法启动**
    - 检查模型路径 `/workspace/models/speech_recognition/SenseVoiceSmall/` 下 `model.pt` 权重文件是否存在
-   - 检查数据集路径 `/workspace/datasets/speech_recognition/` 挂载是否正确
+   - 检查数据集路径 `/workspace/datasets` 挂载是否正确
    - 检查配置文件 `/workspace/config/data_set.cfg` 是否存在且路径正确
 
 4. **找不到模型或数据集**
