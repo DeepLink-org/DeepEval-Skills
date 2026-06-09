@@ -83,7 +83,7 @@ npx skills add ./AIBenchAgent-skills/skills/NVIDIA -s '*' --agent claude-code
 | | 生命科学（推理） | NVIDIA | ⏳ 敬请期待 | 计划实现生命科学研究任务性能评测，包括基因组学分析、蛋白质结构预测、生物信息学计算等应用。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
 | 语音场景 | 语音识别（推理） | NVIDIA | [nvidia-audio-asr](skills/NVIDIA/audio/nvidia-audio-asr/SKILL.md) ✅ | 实现语音识别模型性能评测，包括吞吐量、字符错误率、词错误率等。 |
-| | | 其他芯片 | ⏳ 敬请期待 | |
+| | | Ascend | [ascend-audio-asr](skills/Ascend/audio/ascend-audio-asr/SKILL.md) ✅ | 支持SenseVoice等语音识别模型的推理和评测 |
 | | 语音生成（推理） | NVIDIA | ⏳ 敬请期待 | 计划实现语音生成模型推理性能评测，包括文本到语音合成速度、语音质量等关键指标。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
 | | 音频理解（推理） | NVIDIA | ⏳ 敬请期待 | 计划实现音频理解任务性能评测，包括音频分类、声纹识别等。 |
