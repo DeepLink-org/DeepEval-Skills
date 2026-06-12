@@ -1,14 +1,14 @@
 ---
-name: nvidia-audio-asr
-description: NVIDIA GPU 上语音识别模型推理性能评测技能。支持 SenseVoice 多语言语音识别模型，用于指导 executor 完成容器启动、数据集准备、推理执行、日志采集与性能指标分析（CER/WER）。
+name: ascend-audio-asr
+description: Ascend NPU 上语音识别模型推理性能评测技能。支持 SenseVoice 多语言语音识别模型，用于指导 executor 完成容器启动、数据集准备、推理执行、日志采集与性能指标分析（CER/WER）。
 ---
 
 ### 触发条件
 
 当用户说以下任意内容时启动：
-- "我要在 nvidia 上跑 ASR 模型测试"
-- "帮我测试 SenseVoice 多语言语音理解模型推理性能"
-- "在 nvidia 上跑 中文语音识别 Aishell-1 学术数据集测试集"
+- "我要在 ascend 上跑 ASR 模型测试"
+- "帮我在昇腾 NPU 上测试 SenseVoice 多语言语音理解模型推理性能"
+- "在 ascend 上跑 中文语音识别 Aishell-1 学术数据集测试集"
 - "帮我批量测试语音识别模型 FP32/FP16 性能"
 - "采集 ASR 模型 CER (字符错误率)"
 
@@ -110,7 +110,7 @@ description: NVIDIA GPU 上语音识别模型推理性能评测技能。支持 S
 aishell1、fleurs-ar、fleurs-cmn、fleurs-de、fleurs-en、fleurs-es、fleurs-fr、fleurs-hi、fleurs-it、fleurs-ja、fleurs-ko、fleurs-pt、fleurs-ru、fleurs-th、fleurs-vi、fleurs-yue、kespeech-beijing、kespeech-ji-lu、kespeech-jiang-huai、kespeech-jiao-liao、kespeech-lan-yin、kespeech-mandarin、kespeech-northeastern、kespeech-southwestern、kespeech-zhongyuan、librispeech-test-clean、librispeech-test-other、speech_asr_aishell1_testsets
 
 **硬件要求**：
-- 1 张 NVIDIA GPU
+- 1 张 Ascend NPU（如 Ascend 910B）
 - 足够显存支撑 ASR 模型推理
 
 ---
@@ -119,14 +119,25 @@ aishell1、fleurs-ar、fleurs-cmn、fleurs-de、fleurs-en、fleurs-es、fleurs-f
 
 **Docker 镜像**：
 ```bash
-117.48.149.97:5000/eval-test/sense-voice-small:gpu-v0.1.0
+117.48.149.97:5000/eval-test/sense-voice-small:npu-v0.1.0
 ```
 
-容器内已预装：
+**基础环境**：
 - Python 3.10.12
-- PyTorch 2.6.0
+- CANN（Compute Architecture for Neural Networks）运行时
 - 模型推理运行器 `infer_runner.py`（位于 `/workspace/`）
-- 相关 Python 依赖库
+
+**核心 Python 依赖**（容器内已预装）：
+
+| 类别 | 依赖包 | 版本 | 说明 |
+|------|--------|------|------|
+| 深度学习框架 | `torch` | 2.6.0+cpu | PyTorch 主框架 |
+| 深度学习框架 | `torch_npu` | 2.6.0.post5 | Ascend NPU 后端适配 |
+| 深度学习框架 | `torchaudio` | 2.6.0 | 音频处理扩展 |
+| Ascend 工具链 | `triton-ascend` | 3.2.0 | Ascend 算子编译 |
+| Ascend 工具链 | `hccl` | 0.1.0 | 集合通信库 |
+| Ascend 工具链 | `te` | 0.4.0 | Tensor Engine |
+| ASR 框架 | `funasr` | 1.3.1 | SenseVoice 推理框架 |
 
 ---
 
@@ -137,32 +148,47 @@ aishell1、fleurs-ar、fleurs-cmn、fleurs-de、fleurs-en、fleurs-es、fleurs-f
 ```bash
 docker run -itd \
   --name asr-eval \
-  --gpus all \
+  --runtime=ascend \
+  --ipc=host \
   --shm-size=128g \
+  -e ASCEND_VISIBLE_DEVICES=0 \
   -e PYTHONUNBUFFERED=1 \
+  -v /usr/local/dcmi:/usr/local/dcmi:ro \
+  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi:ro \
+  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
+  -v /etc/ascend_install.info:/etc/ascend_install.info:ro \
   -v $ASR_CONFIG_DIR:/workspace/config:ro \
   -v $ASR_MODEL_CKPT_DIR:/workspace/models:ro \
   -v $ASR_DATA_DIR:/workspace/datasets:ro \
   -v $ASR_INFERENCE_OUTPUT:/workspace/results/${MODEL_NAME}:rw \
   -v $ASR_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \
-  117.48.149.97:5000/eval-test/sense-voice-small:gpu-v0.1.0
+  117.48.149.97:5000/eval-test/sense-voice-small:npu-v0.1.0
 ```
 
 **公共参数说明**：
 
 | 参数 | 说明 |
 |------|------|
-| `--gpus all` | 挂载所有 NVIDIA GPU 设备 |
+| `--runtime=ascend` | 使用 Ascend Docker 运行时，自动注入 NPU 设备与驱动 |
+| `--ipc=host` | 使用宿主机 IPC 命名空间，避免共享内存隔离导致 NPU 通信异常 |
 | `--shm-size=128g` | 共享内存大小，避免大吞吐推理时内存不足 |
+| `-e ASCEND_VISIBLE_DEVICES=0` | 指定容器可见的 NPU 卡号（如使用 0 号卡） |
 | `-e PYTHONUNBUFFERED=1` | Python 输出不缓冲，确保日志实时可见 |
 
+**Ascend 驱动相关挂载说明**：
+- `/usr/local/dcmi` — DCMI（Device Card Management Interface）库，NPU 设备管理接口
+- `/usr/local/bin/npu-smi` — NPU 状态查询工具
+- `/usr/local/Ascend/driver` — Ascend NPU 驱动目录
+- `/etc/ascend_install.info` — Ascend 安装元信息
+
 **挂载权限约定**：
-- `:ro` — 只读，用于输入数据（模型权重、数据集、配置文件）
+- `:ro` — 只读，用于输入数据（模型权重、数据集、配置文件、驱动）
 - `:rw` — 读写，用于输出目录（results、logs）
 
 **注意**：
 - 必须以 `-d` 参数运行（分离模式），并指定保持容器运行的命令（如 `tail -f /dev/null`）
 - 若已存在同名容器，先执行 `docker rm -f asr-eval`
+- 如使用多卡，可设置 `ASCEND_VISIBLE_DEVICES=0,1,2,3`
 
 ### 容器管理命令
 
@@ -178,8 +204,8 @@ docker exec -it asr-eval /bin/bash
 
 **验证容器环境**：
 ```bash
-# 检查 GPU 设备
-nvidia-smi
+# 检查 NPU 设备
+npu-smi info
 
 # 检查挂载的模型权重
 ls -lh /workspace/models/speech_recognition/SenseVoiceSmall/model.pt
@@ -280,8 +306,8 @@ predictions: /workspace/results/SenseVoiceSmall/predictions/
       "dataset": "kespeech-beijing",
       "model": "SenseVoiceSmall",
       "model_type": "recognition",
-      "chip": "gpu",
-      "device": "cuda (NVIDIA H200)",
+      "chip": "npu",
+      "device": "npu (Ascend 910B)",
       "total_samples": 265,
       "success_samples": 265,
       "error_samples": 0,
@@ -365,13 +391,15 @@ except Exception as e:
 
 1. **Docker 容器启动失败**
    - **容器名已存在**：确认不存在同名容器 `docker rm -f asr-eval`
-   - **GPU 不可用**：确认宿主机上 `nvidia-smi` 正常，GPU 驱动已安装
-   - **镜像未拉取**：确认镜像 `117.48.149.97:5000/eval-test/sense-voice-small:gpu-v0.1.0` 已 pull 到本地
+   - **NPU 不可用**：确认宿主机上 `npu-smi info` 正常，Ascend 驱动已安装
+   - **runtime 未注册**：确认已安装 Ascend Docker Runtime，`docker info | grep -i runtime` 中包含 `ascend`
+   - **镜像未拉取**：确认镜像 `117.48.149.97:5000/eval-test/sense-voice-small:npu-v0.1.0` 已 pull 到本地
    - **共享内存不足**：如遇到内存错误，可增加 `--shm-size` 参数值（如 `256g`）
 
-2. **容器内找不到 GPU 设备**
-    - 执行 `nvidia-smi` 验证 GPU 可见性
-    - 检查 docker run 时是否包含 `--gpus all`
+2. **容器内找不到 NPU 设备**
+    - 执行 `npu-smi info` 验证 NPU 可见性
+    - 检查 docker run 时是否包含 `--runtime=ascend` 与 `-e ASCEND_VISIBLE_DEVICES=...`
+    - 检查驱动相关挂载（`/usr/local/dcmi`、`/usr/local/bin/npu-smi`、`/usr/local/Ascend/driver`、`/etc/ascend_install.info`）是否齐全
 
 3. **测试无法启动**
    - 检查模型路径 `/workspace/models/speech_recognition/SenseVoiceSmall/` 下 `model.pt` 权重文件是否存在
@@ -382,17 +410,17 @@ except Exception as e:
    - 检查 `-v` 挂载参数是否正确映射宿主机路径到容器内路径
    - 确认挂载的宿主机目录存在且有读取权限
 
-5. **GPU 显存不足**
-   - **现象**：推理过程报错 `OutOfMemoryError`、`CUDA out of memory` 或程序卡死
-   - **原因**：当前选中的 GPU 显存已被其他进程占用
+5. **NPU 显存不足**
+   - **现象**：推理过程报错 `RuntimeError: NPU out of memory` 或程序卡死
+   - **原因**：当前选中的 NPU 显存已被其他进程占用
    - **解决方案**：
-     step 1. **查看 GPU 使用情况**：
+     step 1. **查看 NPU 使用情况**：
         ```bash
-        nvidia-smi
+        npu-smi info
         ```
-     step 2. **切换可用的 GPU**：通过 `CUDA_VISIBLE_DEVICES` 环境变量指定，例如：
+     step 2. **切换可用的 NPU**：通过 `ASCEND_VISIBLE_DEVICES` 环境变量指定，例如：
         ```bash
-        export CUDA_VISIBLE_DEVICES=0  # 使用第0号卡
+        export ASCEND_VISIBLE_DEVICES=0  # 使用第0号卡
         ```
      step 3. **重新执行脚本**
 

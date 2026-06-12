@@ -1,6 +1,6 @@
 ---
 name: nvidia-cv-pretrain
-description: NVIDIA GPU 上 CV 预训练/分类模型训练性能评测技能。基于 /workspace/code 中的 onedl-mmpretrain 实现和 batch_pretrain.sh，用于指导 executor 完成容器启动、脚本执行、日志采集与 AVG_ITER_TIME 性能指标分析。默认适配 resnet50 + ImageNet，可通过环境变量扩展到 inception_v3、seresnet50、mobilenet_v2、shufflenet_v2、densenet121、swin_large、efficientnet_b2 等模型。
+description: NVIDIA GPU 上 CV 预训练/分类模型训练性能评测技能。基于 /workspace/code 中的 onedl-mmpretrain 和 batch_pretrain.sh，用于指导 executor 完成容器启动、脚本执行、日志采集与 AVG_ITER_TIME 性能指标分析。默认适配 resnet50 + ImageNet，可通过模型参数扩展到 inception_v3、seresnet50、mobilenet_v2、shufflenet_v2、densenet121、swin_large、efficientnet_b2 等模型。
 ---
 
 ## 触发条件
@@ -9,64 +9,60 @@ description: NVIDIA GPU 上 CV 预训练/分类模型训练性能评测技能。
 - "我要在 nvidia 上跑 CV 预训练模型测试"
 - "帮我测试 resnet50 / inception_v3 / swin-large 分类训练性能"
 - "在 nvidia 上跑 mmpretrain 分类模型 benchmark"
-- "帮我批量测试 CV pretrain 模型 FP32/FP16 性能"
+- "帮我批量测试 CV pretrain 模型性能"
 - "采集 pretrain 模型 AVG_ITER_TIME"
 
 ---
 
 ## 环境变量定义
 
-| 环境变量 | 默认值/映射目录 | 是否必需 | 说明 |
-|---------|----------------|----------|------|
-| `CV_PRE_HOST_CODE_DIR` | `/path/to/cv/code` | 是 | 宿主机代码目录，Docker 启动时挂载到容器 `/workspace/code`。 |
-| `CV_PRE_HOST_LOG_DIR` | `/path/to/cv/logs` | 是 | 宿主机日志目录，Docker 启动时挂载到容器 `/workspace/logs`。 |
-| `CV_PRE_HOST_DATASET_DIR` | `/path/to/cv/datasets` | 是 | 宿主机数据集目录，Docker 启动时只读挂载到容器 `/workspace/datasets`。 |
-| `CV_PRE_PROJECT_ROOT` | `/workspace/code` | 是 | 容器内代码根目录。 |
-| `CV_PRE_MMPRE_DIR` | `/workspace/code/onedl-mmpretrain` | 是 | onedl-mmpretrain 项目目录。 |
-| `CV_PRE_MMCV_DIR` | `/workspace/code/onedl-mmcv` | 是 | onedl-mmcv 项目目录，会加入 `PYTHONPATH`。 |
-| `CV_PRE_SCRIPT` | `/workspace/code/batch_pretrain.sh` 或 `/workspace/scripts/batch_pretrain.sh` | 是 | 实际批量运行脚本。代码目录已有脚本时优先使用，否则用 skill 预置脚本。 |
-| `CV_PRE_DATASET_DIR` | `/workspace/datasets/imagenet` | 是 | ImageNet 数据集目录；脚本会建立 `onedl-mmpretrain/data/imagenet` 软链接。 |
-| `CV_PRE_LOG_DIR` | `/workspace/logs` | 是 | 训练日志和 work-dir 输出根目录。 |
-| `CV_PRE_WORK_DIR` | `/workspace/logs/${MODEL_NAME}_gpus${CV_PRE_NGPU}_${PRECISION}` | 是 | mmpretrain `--work-dir` 输出目录，实际日志会在其时间戳子目录下自动生成。 |
-| `CV_PRE_LOG_GLOB` | `/workspace/logs/${MODEL_NAME}_gpus${CV_PRE_NGPU}_${PRECISION}/*/*.log` | 否 | 用于采集指标的日志匹配模式；为空时按模型、卡数、精度自动推导。 |
-| `CV_PRE_DOCKER_IMAGE` | `registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv` | 是 | 运行镜像。 |
-| `CV_PRE_CONTAINER_NAME` | `cv_pretrain_bench` | 否 | 容器名。 |
-| `CV_PRE_NGPU` | 来自 task config 的 `card_count`，默认 `1` | 否 | 训练使用的 GPU 数；生成脚本必须显式设置。 |
-| `CV_PRE_MODELS` | `resnet50` | 否 | 逗号分隔模型列表。 |
-| `CV_PRE_PRECISIONS` | `fp16,fp32` | 否 | 逗号分隔精度列表。 |
+| 环境变量 | 映射目录 | 是否必需 | 说明 |
+|---------|----------|----------|------|
+| `CV_PRE_PROJECT_ROOT` | `/workspace/code` | 是 | 项目根目录，需外部提供，包含 `onedl-mmpretrain` 和 `onedl-mmcv` 源码；`batch_pretrain.sh` 可由 skill 资源复制到该目录 |
+| `CV_PRE_DATA_DIR` | `/workspace/datasets/imagenet` | 是 | ImageNet 数据集目录 |
+| `CV_PRE_LOGS_DIR` | `/workspace/logs` | 否 | 训练日志、work-dir 和汇总结果 `eval_result.json` 输出目录 |
 
-说明：
-- 本 skill 以用户当前 `/workspace/code` 实现为准，不再假设代码位于 `./models/onedl-mmpretrain`。
-- Docker 启动阶段使用 `CV_PRE_HOST_*`，运行阶段只使用容器内 `/workspace/*` 路径。
-- executor 会把 skill assets 上传到 `/workspace/scripts` 和 `/workspace/tools`。如果 `/workspace/code/batch_pretrain.sh` 不存在，生成脚本应使用 `/workspace/scripts/batch_pretrain.sh`。
+**说明**：
+- **CV_PRE_PROJECT_ROOT** 需要外部提供，挂载到 `/workspace/code`，至少应包含 `onedl-mmpretrain` 和 `onedl-mmcv`；`batch_pretrain.sh` 可由 agent 从 `/workspace/scripts/batch_pretrain.sh` 复制到 `/workspace/code/batch_pretrain.sh`
+- **CV_PRE_DATA_DIR** 需要外部提供，指向 ImageNet 数据集目录
+- **CV_PRE_LOGS_DIR** 用于保存训练日志、mmpretrain work-dir 和汇总结果 `eval_result.json`
+- 表格中的"映射目录"列指明了容器启动时 `-v` 参数的挂载路径，即宿主机路径映射到容器内的路径
 
 ---
 
 ## 目录结构约定
 
-```text
-/workspace/code/
-├── batch_pretrain.sh
-├── onedl-mmpretrain/
-│   ├── configs/
-│   ├── tools/train.py
-│   └── ...
-└── onedl-mmcv/
+- `$CV_PRE_PROJECT_ROOT`: 项目根目录，默认结构如下：
+  ```text
+  $CV_PRE_PROJECT_ROOT/                 # = /workspace/code
+  ├── batch_pretrain.sh                 # 运行前需要存在；可由本 skill 的 scripts/batch_pretrain.sh 复制到此处
+  ├── onedl-mmpretrain/                 # 可选；镜像内置源码时可不提供
+  │   ├── configs/
+  │   ├── tools/train.py
+  │   └── ...
+  └── onedl-mmcv/                       # 可选；pip install 后通常不需要源码目录
+  ```
 
-/workspace/datasets/imagenet/
-├── train/
-└── val/
+  `batch_pretrain.sh` 会自动查找 mmpretrain 源码目录；该目录必须包含 `configs/` 和 `tools/train.py`。如果镜像只安装了 Python 包但没有保留源码配置文件，仍需通过 `$CV_PRE_PROJECT_ROOT/onedl-mmpretrain` 或 `CV_PRE_MMPRE_DIR` 提供 mmpretrain 源码目录。
 
-/workspace/logs/
-```
+- `$CV_PRE_DATA_DIR`: ImageNet 数据集目录，默认结构如下：
+  ```text
+  $CV_PRE_DATA_DIR/                     # = /workspace/datasets/imagenet
+  ├── train/
+  └── val/
+  ```
+
+- `$CV_PRE_LOGS_DIR`: 日志和结果目录，默认映射到 `/workspace/logs`。
 
 ---
 
 ## 支持的模型配置
 
-默认运行：`resnet50`，默认精度 `fp16,fp32`，默认 GPU 数来自 task config。
+默认运行：`resnet50`，固定执行 `fp16,fp32` 两种精度，默认 GPU 数来自 task config。
 
 支持模型：`resnet50`、`inception_v3`、`seresnet50`、`mobilenet_v2`、`shufflenet_v2`、`densenet121`、`swin_large`、`efficientnet_b2`。
+
+当前镜像内的 `onedl-mmpretrain/configs/_base_/datasets/imagenet_bs32.py` 已配置为直接从 `/workspace/datasets/imagenet` 读取数据集，不需要再创建 `data/imagenet` 软链接。
 
 ---
 
@@ -88,21 +84,19 @@ registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv
 |---------|----------------|------|
 | `1卡`、`单卡`、`card_count=1` | `export CV_PRE_NGPU=1` | `--nproc_per_node=1`，日志目录包含 `_gpus1_`。 |
 | `8卡`、`八卡`、`card_count=8` | `export CV_PRE_NGPU=8` | `--nproc_per_node=8`，日志目录包含 `_gpus8_`。 |
-| `fp16`、`半精度` | `export CV_PRE_PRECISIONS=fp16` | 使用 `AmpOptimWrapper`。 |
-| `fp32`、`单精度` | `export CV_PRE_PRECISIONS=fp32` | 使用 `OptimWrapper`。 |
 | `resnet50` / `swin_large` / `efficientnet_b2` 等 | `export CV_PRE_MODELS=<model>` | 运行对应模型配置。 |
 
-如果用户没有指定，默认值为：`CV_PRE_NGPU=1`、`CV_PRE_MODELS=resnet50`、`CV_PRE_PRECISIONS=fp16,fp32`。
+如果用户没有指定，默认值为：`CV_PRE_NGPU=1`、`CV_PRE_MODELS=resnet50`。精度固定为 `fp16,fp32`，不支持通过用户输入或环境变量切换单独精度。
 
-生成的评测脚本应执行：
+生成评测脚本时，如果 `/workspace/code/batch_pretrain.sh` 不存在，应先将 agent 预置的 `/workspace/scripts/batch_pretrain.sh` 复制到 `/workspace/code/batch_pretrain.sh`，再执行：
 
 ```bash
-if [ -f /workspace/code/batch_pretrain.sh ]; then
-  export CV_PRE_SCRIPT=/workspace/code/batch_pretrain.sh
-else
-  export CV_PRE_SCRIPT=/workspace/scripts/batch_pretrain.sh
+if [ ! -f /workspace/code/batch_pretrain.sh ] && [ -f /workspace/scripts/batch_pretrain.sh ]; then
+  cp /workspace/scripts/batch_pretrain.sh /workspace/code/batch_pretrain.sh
+  chmod +x /workspace/code/batch_pretrain.sh
 fi
-bash "$CV_PRE_SCRIPT"
+test -f /workspace/code/batch_pretrain.sh
+bash /workspace/code/batch_pretrain.sh
 ```
 
 ---
@@ -112,92 +106,118 @@ bash "$CV_PRE_SCRIPT"
 ```bash
 docker run --gpus all \
   --network host --ipc host --shm-size=128g \
-  -it --name ${CV_PRE_CONTAINER_NAME:-cv_pretrain_bench} \
-  -v ${CV_PRE_HOST_CODE_DIR:-/path/to/cv/code}:/workspace/code:rw \
-  -v ${CV_PRE_HOST_LOG_DIR:-/path/to/cv/logs}:/workspace/logs:rw \
-  -v ${CV_PRE_HOST_DATASET_DIR:-/path/to/cv/datasets}:/workspace/datasets:ro \
-  ${CV_PRE_DOCKER_IMAGE:-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv} \
+  -it --name cv_pretrain_bench \
+  -v $CV_PRE_PROJECT_ROOT:/workspace/code:rw \
+  -v $CV_PRE_DATA_DIR:/workspace/datasets/imagenet:ro \
+  -v $CV_PRE_LOGS_DIR:/workspace/logs:rw \
+  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv \
   bash
 ```
 
-如果容器名已存在：`docker rm -f ${CV_PRE_CONTAINER_NAME:-cv_pretrain_bench}`。
+如果容器名已存在：`docker rm -f cv_pretrain_bench`。
+
+**注意**：
+- `CV_PRE_PROJECT_ROOT`、`CV_PRE_DATA_DIR` 必须在宿主机提供
+- 容器启动后、执行评测前，如果 `/workspace/code/batch_pretrain.sh` 不存在，应将预置的 `/workspace/scripts/batch_pretrain.sh` 复制到 `/workspace/code/batch_pretrain.sh` 并添加执行权限
+- 输出目录 `CV_PRE_LOGS_DIR` 不存在时需先在宿主机创建，或由 executor 创建后再挂载
 
 ---
 
-## 第二阶段：运行评测
+## 第二阶段：容器中执行评测
+
+### 步骤 1：选择模型与源码目录
+
+容器内代码、数据和日志路径已通过卷挂载固定（详见[环境变量定义](#环境变量定义)）。如果镜像已内置 mmpretrain 源码，通常无需额外设置目录环境变量。
 
 ```bash
-export CV_PRE_PROJECT_ROOT=${CV_PRE_PROJECT_ROOT:-/workspace/code}
-export CV_PRE_MMPRE_DIR=${CV_PRE_MMPRE_DIR:-/workspace/code/onedl-mmpretrain}
-export CV_PRE_MMCV_DIR=${CV_PRE_MMCV_DIR:-/workspace/code/onedl-mmcv}
-if [ -f /workspace/code/batch_pretrain.sh ]; then
-  export CV_PRE_SCRIPT=${CV_PRE_SCRIPT:-/workspace/code/batch_pretrain.sh}
-else
-  export CV_PRE_SCRIPT=${CV_PRE_SCRIPT:-/workspace/scripts/batch_pretrain.sh}
+# 选择要测试的模型和 GPU 数
+MODEL_NAME="resnet50"         # 可选: resnet50, inception_v3, seresnet50, mobilenet_v2, shufflenet_v2, densenet121, swin_large, efficientnet_b2
+GPU_NUM="${CARD_COUNT:-1}"    # 默认使用 task config 的 card_count，未提供时为 1
+# 精度固定执行 fp16,fp32，不需要设置精度参数
+
+# 如 mmpretrain 源码在镜像内其他路径，可显式指定
+# export CV_PRE_MMPRE_DIR=/opt/onedl-mmpretrain
+```
+
+### 配置文件说明
+
+**关键路径**：
+```text
+/workspace/code/onedl-mmpretrain       # mmpretrain 项目目录；也可为镜像内置源码路径
+/workspace/code/onedl-mmcv             # 可选；mmcv 已安装时不需要源码目录
+/workspace/datasets/imagenet           # ImageNet 数据集目录
+/workspace/logs                        # 训练日志、work-dir 和结果 JSON 输出目录
+/workspace/code/batch_pretrain.sh      # 批量评测脚本；代码/镜像没有时由 skill scripts/batch_pretrain.sh 提供
+```
+
+**注意**：
+- `batch_pretrain.sh` 可直接放在 `/workspace/code/batch_pretrain.sh`；如果运行环境中不存在，则从 agent 预置的 `/workspace/scripts/batch_pretrain.sh` 复制到该路径
+- 脚本会自动查找 mmpretrain 源码目录；数据集路径由镜像内 `configs/_base_/datasets/imagenet_bs32.py` 直接指向 `/workspace/datasets/imagenet`
+- `onedl-mmcv` 已通过 `pip install .` 安装到镜像环境时，不需要提供 `/workspace/code/onedl-mmcv`
+
+### 步骤 2：执行训练评测
+
+运行批量评测脚本，训练日志和结果文件将保存至 `/workspace/logs`：
+
+```bash
+mkdir -p /workspace/logs
+if [ ! -f /workspace/code/batch_pretrain.sh ] && [ -f /workspace/scripts/batch_pretrain.sh ]; then
+  cp /workspace/scripts/batch_pretrain.sh /workspace/code/batch_pretrain.sh
+  chmod +x /workspace/code/batch_pretrain.sh
 fi
-export CV_PRE_DATASET_DIR=${CV_PRE_DATASET_DIR:-/workspace/datasets/imagenet}
-export CV_PRE_LOG_DIR=${CV_PRE_LOG_DIR:-/workspace/logs}
-export CV_PRE_NGPU=${CV_PRE_NGPU:-${CARD_COUNT:-1}}
-export CV_PRE_MODELS=${CV_PRE_MODELS:-resnet50}
-export CV_PRE_PRECISIONS=${CV_PRE_PRECISIONS:-fp16,fp32}
-chmod +x "$CV_PRE_SCRIPT"
+test -f /workspace/code/batch_pretrain.sh
 
-CV_PRE_RUN_MARKER=${CV_PRE_RUN_MARKER:-/tmp/cv_pre_run_marker.$(date +%s).$$}
+export CV_PRE_NGPU="$GPU_NUM"
+export CV_PRE_MODELS="$MODEL_NAME"
+export CV_PRE_RUN_MARKER=/tmp/cv_pre_run_marker.$(date +%s).$$
 touch "$CV_PRE_RUN_MARKER"
-cd "$CV_PRE_MMPRE_DIR"
-bash "$CV_PRE_SCRIPT"
 
-MODEL_NAME=${CV_PRE_MODELS%%,*}
-PRECISION=${CV_PRE_PRECISIONS%%,*}
-CV_PRE_WORK_DIR=${CV_PRE_WORK_DIR:-${CV_PRE_LOG_DIR}/${MODEL_NAME}_gpus${CV_PRE_NGPU}_${PRECISION}}
-CV_PRE_LATEST_LOG=$(find "$CV_PRE_WORK_DIR" -type f -name "*.log" -newer "$CV_PRE_RUN_MARKER" -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
-test -n "$CV_PRE_LATEST_LOG"
-export CV_PRE_LATEST_LOG
+# 如 mmpretrain 源码在镜像内其他路径，可显式指定
+# export CV_PRE_MMPRE_DIR=/opt/onedl-mmpretrain
+bash /workspace/code/batch_pretrain.sh
 ```
 
-运行前检查：
+上述指令的默认行为：
+- 运行 `resnet50` 模型
+- 固定分别执行 `fp16` 和 `fp32` 两种精度
+- 使用 `GPU_NUM` 指定的 GPU 数启动分布式训练
+- 训练输出目录为 `/workspace/logs/${MODEL_NAME}_gpus${GPU_NUM}_${PRECISION}`
+- 所有模型和精度组合的结构化结果统一写入 `/workspace/logs/eval_result.json`
 
+**验证执行结果**：
 ```bash
-test -d "$CV_PRE_MMPRE_DIR"
-test -d "$CV_PRE_MMCV_DIR"
-test -f "$CV_PRE_SCRIPT"
-test -d "$CV_PRE_DATASET_DIR"
+# 查看最新训练日志
+PRECISION="fp16"
+LOG_DIR=/workspace/logs/${MODEL_NAME}_gpus${GPU_NUM}_${PRECISION}
+LATEST_LOG=$(find "$LOG_DIR" -type f -name "*.log" -newer "$CV_PRE_RUN_MARKER" -printf "%T@ %p
+" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
+test -n "$LATEST_LOG"
+tail -50 "$LATEST_LOG"
+
+# 检查结果文件
+cat /workspace/logs/eval_result.json
 ```
 
 ---
 
-## 结果文件命名与汇总规则
+## 评测输出产物
 
-生成评测脚本时禁止把所有单项结果固定写到 `/workspace/logs/result.json`，否则不同模型、卡数或精度会互相覆盖。
+训练日志和汇总结果均输出到 `/workspace/logs`。
 
-每个模型、卡数、精度组合必须写入独立结果文件：
+| 文件路径 | 描述 |
+| :--- | :--- |
+| `/workspace/logs/${MODEL_NAME}_gpus${GPU_NUM}_${PRECISION}/<timestamp>/<timestamp>.log` | MMEngine 训练日志，包含 `AVG_ITER_TIME`、`DATA`、`OP` 指标 |
+| `/workspace/logs/eval_result.json` | 本次运行所有模型、GPU 数和精度组合的汇总结果 |
 
-```bash
-RESULT_JSON="${CV_PRE_LOG_DIR}/${MODEL_NAME}_gpus${CV_PRE_NGPU}_${PRECISION}_result.json"
-```
+**注意**：评测固定执行 `fp16,fp32` 两种精度；当一次运行多个模型时，所有组合的结果都写入同一个 `eval_result.json`，不再生成额外的 `*_result.json` 文件。
 
-示例：
-
-```text
-/workspace/logs/resnet50_gpus1_fp16_result.json
-/workspace/logs/resnet50_gpus1_fp32_result.json
-/workspace/logs/swin_large_gpus8_fp16_result.json
-/workspace/logs/swin_large_gpus8_fp32_result.json
-```
-
-同时，生成评测脚本必须把本次运行产生的所有单项结果汇总写入：
-
-```text
-/workspace/logs/eval_result.json
-```
-
-`eval_result.json` 格式建议如下：
+**汇总结果示例**：
 
 ```json
 {
   "status": "success",
   "task": "cv_pretrain",
-  "model": "resnet50",
+  "model": "resnet50,swin_large",
   "gpu_count": 1,
   "precisions": ["fp16", "fp32"],
   "results": {
@@ -206,108 +226,81 @@ RESULT_JSON="${CV_PRE_LOG_DIR}/${MODEL_NAME}_gpus${CV_PRE_NGPU}_${PRECISION}_res
       "gpu_count": 1,
       "precision": "fp16",
       "log": "/workspace/logs/resnet50_gpus1_fp16/<timestamp>/<timestamp>.log",
-      "result_json": "/workspace/logs/resnet50_gpus1_fp16_result.json",
-      "avg_iter_time": 0.0,
-      "data_time": 0.0,
-      "op_time": 0.0
+      "avg_iter_time": 0.0387,
+      "data_time": 0.0005,
+      "op_time": 0.0382
+    },
+    "swin_large_gpus1_fp32": {
+      "model": "swin_large",
+      "gpu_count": 1,
+      "precision": "fp32",
+      "log": "/workspace/logs/swin_large_gpus1_fp32/<timestamp>/<timestamp>.log",
+      "avg_iter_time": 0.2210,
+      "data_time": 0.0045,
+      "op_time": 0.2165
     }
   }
 }
 ```
 
-如果 `CV_PRE_PRECISIONS=fp16,fp32`，生成脚本必须分别解析 fp16 和 fp32 的 mmengine 日志，写两个单项结果文件，并把两个结果都写入同一个 `/workspace/logs/eval_result.json`。如果用户只指定 `fp32`，则 `eval_result.json` 只包含 `fp32` 的结果。
-
-生成脚本必须使用 `CV_PRE_RUN_MARKER` 只解析 marker 之后新生成/更新的日志，避免读取历史日志。
-
-下面是结果汇总逻辑的参考实现，生成脚本应采用等价逻辑：
+**验证输出文件**：
 
 ```bash
-python3 - <<'CV_PRE_PARSE'
-import glob, json, os, re
-
-models = [m.strip() for m in os.environ.get("CV_PRE_MODELS", "resnet50").split(",") if m.strip()]
-gpu = os.environ.get("CV_PRE_NGPU", "1")
-log_dir = os.environ.get("CV_PRE_LOG_DIR", "/workspace/logs")
-marker = os.environ.get("CV_PRE_RUN_MARKER")
-precisions = [p.strip() for p in os.environ.get("CV_PRE_PRECISIONS", "fp16,fp32").split(",") if p.strip()]
-marker_mtime = os.path.getmtime(marker) if marker and os.path.exists(marker) else 0
-
-results = {}
-for model in models:
-    for precision in precisions:
-        work_dir = f"{log_dir}/{model}_gpus{gpu}_{precision}"
-        logs = [p for p in glob.glob(f"{work_dir}/*/*.log") if os.path.getmtime(p) > marker_mtime]
-        logs.sort(key=os.path.getmtime, reverse=True)
-        log = logs[0] if logs else ""
-        text = open(log, "r", encoding="utf-8", errors="ignore").read() if log else ""
-        rows = re.findall(r"AVG_ITER_TIME:\s*([0-9.]+)s\s*\|\s*DATA:\s*([0-9.]+)s\s*\|\s*OP:\s*([0-9.]+)s", text)
-        last = rows[-1] if rows else None
-        key = f"{model}_gpus{gpu}_{precision}"
-        item = {
-            "model": model,
-            "gpu_count": int(gpu),
-            "precision": precision,
-            "log": log,
-            "avg_iter_time": float(last[0]) if last else None,
-            "data_time": float(last[1]) if last else None,
-            "op_time": float(last[2]) if last else None,
-        }
-        item_path = os.path.join(log_dir, f"{key}_result.json")
-        item["result_json"] = item_path
-        with open(item_path, "w", encoding="utf-8") as f:
-            json.dump(item, f, ensure_ascii=False, indent=2)
-        results[key] = item
-
-aggregate = {
-    "status": "success" if results and all(v.get("avg_iter_time") is not None for v in results.values()) else "partial",
-    "task": "cv_pretrain",
-    "model": ",".join(models),
-    "gpu_count": int(gpu),
-    "precisions": precisions,
-    "results": results,
-}
-with open(os.path.join(log_dir, "eval_result.json"), "w", encoding="utf-8") as f:
-    json.dump(aggregate, f, ensure_ascii=False, indent=2)
-print("eval result json written: /workspace/logs/eval_result.json")
-CV_PRE_PARSE
+cat /workspace/logs/eval_result.json
 ```
 
 ---
 
 ## 关键性能指标
 
-训练日志中应包含 `CustomIterTimerHook` 输出，例如：
+训练日志中应包含 AVG_ITER_TIME 输出，例如：
 
 ```text
 === AVG_ITER_TIME: 0.0387s | DATA: 0.0005s | OP: 0.0382s ===
 ```
 
-关注指标：`AVG_ITER_TIME`、`DATA`、`OP`。
+`eval_result.json` 会记录每个模型、GPU 数和精度组合的详细性能数据。
 
-采集命令：
+#### 指标说明
+
+| 类型 | 指标 | 说明 |
+|------|------|------|
+| 性能（必采） | `avg_iter_time` | 平均每轮训练迭代耗时，核心训练性能指标，数值越低越好 |
+| 性能（辅助） | `data_time` | 平均数据读取和准备耗时 |
+| 性能（辅助） | `op_time` | 平均算子和反向传播等计算耗时 |
+| 元信息 | `model` / `gpu_count` / `precision` | 模型、GPU 数和精度配置，用于区分不同测试组合 |
+
+#### 指标采集
+
+优先读取汇总结果文件：
 
 ```bash
-if [ -n "${CV_PRE_LATEST_LOG:-}" ]; then
-  LOG="$CV_PRE_LATEST_LOG"
-else
-  MODEL_NAME=${CV_PRE_MODELS%%,*}
-  PRECISION=${CV_PRE_PRECISIONS%%,*}
-  CV_PRE_WORK_DIR=${CV_PRE_WORK_DIR:-${CV_PRE_LOG_DIR:-/workspace/logs}/${MODEL_NAME:-resnet50}_gpus${CV_PRE_NGPU:-1}_${PRECISION:-fp16}}
-  test -n "${CV_PRE_RUN_MARKER:-}"
-  LOG=$(find "$CV_PRE_WORK_DIR" -type f -name "*.log" -newer "$CV_PRE_RUN_MARKER" -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
-fi
+python3 -c "
+import json
+path='/workspace/logs/eval_result.json'
+print(json.dumps(json.load(open(path, 'r', encoding='utf-8')), indent=2, ensure_ascii=False))
+"
+```
+
+如需从训练日志临时提取，可使用：
+
+```bash
+MODEL_NAME=${MODEL_NAME:-resnet50}
+GPU_NUM=${GPU_NUM:-${CARD_COUNT:-1}}
+PRECISION=${PRECISION:-fp16}
+LOG_DIR=/workspace/logs/${MODEL_NAME}_gpus${GPU_NUM}_${PRECISION}
+LOG=$(find "$LOG_DIR" -type f -name "*.log" -printf "%T@ %p
+" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
 test -n "$LOG"
-grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "AVG_ITER_TIME: \K[0-9.]+"
-grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "DATA: \K[0-9.]+"
-grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "OP: \K[0-9.]+"
+grep "AVG_ITER_TIME" "$LOG" | tail -1
 ```
 
 ---
 
 ## 常见问题
 
-1. **找不到 `batch_pretrain.sh`**：检查 `/workspace/code/batch_pretrain.sh` 是否存在；不存在时使用 agent 上传的 `/workspace/scripts/batch_pretrain.sh`。
-2. **找不到 `onedl-mmpretrain` 或 `onedl-mmcv`**：检查 `CV_PRE_MMPRE_DIR` 和 `CV_PRE_MMCV_DIR`。
-3. **数据集路径错误**：检查 `CV_PRE_DATASET_DIR=/workspace/datasets/imagenet` 是否包含 ImageNet 数据集；脚本会建立 `onedl-mmpretrain/data/imagenet` 软链接。
-4. **没有 `AVG_ITER_TIME`**：确认 `custom_iter_timer_hook.py` 已被项目 config 引入，且不要直接读取历史最新日志，应使用 `CV_PRE_RUN_MARKER`。
+1. **找不到 `batch_pretrain.sh`**：检查 `/workspace/code/batch_pretrain.sh` 是否存在；如果不存在，应将 agent 预置的 `/workspace/scripts/batch_pretrain.sh` 复制到 `/workspace/code/batch_pretrain.sh` 并添加执行权限。
+2. **找不到 mmpretrain 源码目录**：确认镜像内或挂载目录中存在包含 `configs/` 和 `tools/train.py` 的 mmpretrain 源码目录；必要时设置 `CV_PRE_MMPRE_DIR=/path/to/onedl-mmpretrain`。`onedl-mmcv` 已安装时不需要源码目录。
+3. **数据集路径错误**：检查 `/workspace/datasets/imagenet` 是否包含 ImageNet 数据集；当前镜像内 `configs/_base_/datasets/imagenet_bs32.py` 应直接从该路径读取。
+4. **没有 `AVG_ITER_TIME`**：确认项目配置已启用 AVG_ITER_TIME 日志输出，且不要直接读取历史最新日志，应使用 `CV_PRE_RUN_MARKER`。
 5. **GPU 数不匹配**：导出 `CV_PRE_NGPU=<card_count>`，并确认容器可见 GPU 数。

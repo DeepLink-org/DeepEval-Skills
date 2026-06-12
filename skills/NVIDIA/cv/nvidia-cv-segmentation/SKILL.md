@@ -1,6 +1,6 @@
 ---
 name: nvidia-cv-segmentation
-description: NVIDIA GPU 上 CV 语义分割训练性能评测技能。基于 /workspace/code 中的 onedl-mmsegmentation 实现和 batch_segmentation.sh，用于指导 executor 完成容器启动、脚本执行、日志采集与 AVG_ITER_TIME 性能指标分析。默认适配 fcn + Cityscapes + ResNet50 backbone 权重，可通过环境变量扩展到 帮我测试deeplabv3分割训练性能，1卡，nvidia上、pspnet、apcnet 等模型。
+description: NVIDIA GPU 上 CV 语义分割训练性能评测技能。基于 /workspace/code 中的 onedl-mmsegmentation 和 batch_segmentation.sh，用于指导 executor 完成容器启动、脚本执行、日志采集与 AVG_ITER_TIME 性能指标分析。默认适配 fcn + Cityscapes + ResNetV1c-50 backbone 权重，可通过模型参数扩展到 deeplabv3、pspnet、apcnet 等模型。
 ---
 
 ## 触发条件
@@ -15,75 +15,61 @@ description: NVIDIA GPU 上 CV 语义分割训练性能评测技能。基于 /wo
 
 ## 环境变量定义
 
-| 环境变量 | 默认值/映射目录 | 是否必需 | 说明 |
-|---------|----------------|----------|------|
-| `CV_SEG_HOST_CODE_DIR` | `/path/to/cv/code` | 是 | 宿主机代码目录，Docker 启动时挂载到容器 `/workspace/code`。 |
-| `CV_SEG_HOST_LOG_DIR` | `/path/to/cv/logs` | 是 | 宿主机日志目录，Docker 启动时挂载到容器 `/workspace/logs`。 |
-| `CV_SEG_HOST_DATASET_DIR` | `/path/to/cv/datasets` | 是 | 宿主机数据集目录，Docker 启动时只读挂载到容器 `/workspace/datasets`。 |
-| `CV_SEG_HOST_WEIGHT_DIR` | `/path/to/cv/weight` | 是 | 宿主机权重目录，Docker 启动时只读挂载到容器 `/workspace/weight`。 |
-| `CV_SEG_PROJECT_ROOT` | `/workspace/code` | 是 | 容器内代码根目录，包含 `onedl-mmsegmentation`、`onedl-mmcv` 和 `batch_segmentation.sh`。 |
-| `CV_SEG_MMSEG_DIR` | `/workspace/code/onedl-mmsegmentation` | 是 | onedl-mmsegmentation 项目目录，训练命令从这里执行。 |
-| `CV_SEG_MMCV_DIR` | `/workspace/code/onedl-mmcv` | 是 | onedl-mmcv 项目目录，会加入 `PYTHONPATH`。 |
-| `CV_SEG_SCRIPT` | `/workspace/code/batch_segmentation.sh` | 是 | 实际批量运行脚本。当前用户实现位于 `/workspace/code/batch_segmentation.sh`。 |
-| `CV_SEG_WEIGHT_DIR` | `/workspace/weight` | 是 | 预训练权重目录，Docker 启动时挂载这个目录。 |
-| `CV_SEG_WEIGHT_PATH` | `/workspace/weight/resnet50_v1c-2cccc1ad.pth` | 是 | ResNetV1c-50 backbone 预训练权重文件，训练命令使用这个文件路径。 |
-| `CV_SEG_DATASET_DIR` | `/workspace/datasets/cityscapes` 或配置内路径 | 是 | Cityscapes 数据集目录；若项目 config 已固定数据路径，按实际 config 为准。 |
-| `CV_SEG_LOG_DIR` | `/workspace/logs` | 是 | 训练日志和 work-dir 输出根目录。 |
-| `CV_SEG_WORK_DIR` | `/workspace/logs/${MODEL_NAME}_gpus${CV_SEG_NGPU}_${PRECISION}` | 是 | mmseg `--work-dir` 输出目录，实际日志会在其时间戳子目录下自动生成；1卡为 `fcn_gpus1_fp16`，8卡为 `fcn_gpus8_fp16`。 |
-| `CV_SEG_LOG_GLOB` | `/workspace/logs/${MODEL_NAME}_gpus${CV_SEG_NGPU}_${PRECISION}/*/*.log` | 否 | 用于采集指标的日志匹配模式；为空时按模型、卡数、精度自动推导。 |
-| `CV_SEG_DOCKER_IMAGE` | `registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_segmentation` | 是 | 运行镜像。 |
-| `CV_SEG_CONTAINER_NAME` | `cv_seg_bench` | 否 | 容器名，默认使用用户现有命名规范。 |
-| `CV_SEG_NGPU` | 来自 task config 的 `card_count`，默认 `1` | 否 | 训练使用的 GPU 数。1卡任务设为 `1`，8卡任务设为 `8`；生成评测脚本时必须显式 `export CV_SEG_NGPU=<card_count>`。 |
-| `CV_SEG_MODELS` | `fcn` | 否 | 当前实现默认只跑 `fcn`；可扩展为 `deeplabv3,fcn,pspnet,apcnet`。 |
-| `CV_SEG_PRECISIONS` | `fp16,fp32` | 否 | 默认按顺序运行 `fp16` 再运行 `fp32`；用户可指定单个精度，如 `fp16` 或 `fp32`。 |
+| 环境变量 | 映射目录 | 是否必需 | 说明 |
+|---------|----------|----------|------|
+| `CV_SEG_PROJECT_ROOT` | `/workspace/code` | 是 | 项目根目录，需外部提供，包含 `onedl-mmsegmentation` 和 `onedl-mmcv` 源码；`batch_segmentation.sh` 可由 skill 资源复制到该目录 |
+| `CV_SEG_DATA_DIR` | `/workspace/datasets/cityscapes` | 是 | Cityscapes 数据集目录 |
+| `CV_SEG_WEIGHT_DIR` | `/workspace/weight` | 是 | 预训练权重目录，存放 `resnet50_v1c-2cccc1ad.pth` |
+| `CV_SEG_LOGS_DIR` | `/workspace/logs` | 否 | 训练日志、work-dir 和汇总结果 `eval_result.json` 输出目录 |
 
 **说明**：
-- 本 skill 以用户当前 `/workspace/code` 实现为准，不再假设代码位于 `./models/onedl-mmsegmentation`。
-- Docker 启动阶段使用 `CV_SEG_HOST_*` 作为宿主机源路径，挂载到容器内固定路径 `/workspace/code`、`/workspace/logs`、`/workspace/datasets`、`/workspace/weight`。
-- 运行评测阶段只使用容器内路径，包括 `CV_SEG_PROJECT_ROOT`、`CV_SEG_MMSEG_DIR`、`CV_SEG_MMCV_DIR`、`CV_SEG_SCRIPT`、`CV_SEG_WEIGHT_PATH`、`CV_SEG_LOG_DIR`。
-- 即使 executor 会把 skill assets 上传到 `/workspace/scripts` 和 `/workspace/tools`，生成脚本也必须优先执行 `CV_SEG_SCRIPT=/workspace/code/batch_segmentation.sh`，因为这是用户当前验证过的运行入口。
+- **CV_SEG_PROJECT_ROOT** 需要外部提供，挂载到 `/workspace/code`，至少应包含 `onedl-mmsegmentation` 和 `onedl-mmcv`；`batch_segmentation.sh` 可由 agent 从 `/workspace/scripts/batch_segmentation.sh` 复制到 `/workspace/code/batch_segmentation.sh`
+- **CV_SEG_DATA_DIR** 需要外部提供，指向 Cityscapes 数据集目录
+- **CV_SEG_WEIGHT_DIR** 需要外部提供，存放 ResNetV1c-50 backbone 预训练权重
+- **CV_SEG_LOGS_DIR** 用于保存训练日志、mmseg work-dir 和汇总结果 `eval_result.json`
+- 表格中的"映射目录"列指明了容器启动时 `-v` 参数的挂载路径，即宿主机路径映射到容器内的路径
 
 ---
 
 ## 目录结构约定
 
-容器内推荐结构：
+- `$CV_SEG_PROJECT_ROOT`: 项目根目录，默认结构如下：
+  ```text
+  $CV_SEG_PROJECT_ROOT/                 # = /workspace/code
+  ├── batch_segmentation.sh             # 运行前需要存在；可由本 skill 的 scripts/batch_segmentation.sh 复制到此处
+  ├── onedl-mmsegmentation/             # 可选；镜像内置源码时可不提供
+  │   ├── configs/
+  │   ├── tools/train.py
+  │   └── ...
+  └── onedl-mmcv/                       # 可选；pip install 后通常不需要源码目录
+  ```
 
-```text
-/workspace/code/
-├── batch_segmentation.sh
-├── onedl-mmsegmentation/
-│   ├── configs/
-│   ├── tools/train.py
-│   └── ...
-└── onedl-mmcv/
+  `batch_segmentation.sh` 会自动查找 mmsegmentation 源码目录；该目录必须包含 `configs/` 和 `tools/train.py`。如果镜像只安装了 Python 包但没有保留源码配置文件，仍需通过 `$CV_SEG_PROJECT_ROOT/onedl-mmsegmentation` 或 `CV_SEG_MMSEG_DIR` 提供 mmsegmentation 源码目录。
 
-/workspace/weight/
-└── resnet50_v1c-2cccc1ad.pth
+- `$CV_SEG_WEIGHT_DIR`: 预训练权重目录，默认结构如下：
+  ```text
+  $CV_SEG_WEIGHT_DIR/                   # = /workspace/weight
+  └── resnet50_v1c-2cccc1ad.pth
+  ```
 
-/workspace/logs/
-```
+- `$CV_SEG_DATA_DIR`: Cityscapes 数据集目录，默认结构如下：
+  ```text
+  $CV_SEG_DATA_DIR/                     # = /workspace/datasets/cityscapes
+  ├── leftImg8bit/
+  └── gtFine/
+  ```
 
-当前宿主机目录按用户实际环境挂载：`/path/to/cv/code` -> `/workspace/code`，`/path/to/cv/logs` -> `/workspace/logs`，`/path/to/cv/datasets` -> `/workspace/datasets`，`/path/to/cv/weight` -> `/workspace/weight`。
+- `$CV_SEG_LOGS_DIR`: 日志和结果目录，默认映射到 `/workspace/logs`。
 
 ---
 
 ## 支持的模型配置
 
-当前用户实现默认运行：
-- 模型：`fcn`
-- 精度：默认按顺序运行 `fp16`、`fp32`
-- GPU 数：由 task config 的 `card_count` 决定，支持 `1` 和 `8`
-- 配置文件：`configs/fcn/fcn_r50-d8_4xb2-40k_cityscapes-512x1024.py`
-- 权重：`/workspace/weight/resnet50_v1c-2cccc1ad.pth`
+默认运行：`fcn`，固定执行 `fp16,fp32` 两种精度，默认 GPU 数来自 task config。
 
-可扩展模型：
-- `deeplabv3`
-- `fcn`
-- `pspnet`
-- `apcnet`
+支持模型：`fcn`、`deeplabv3`、`pspnet`、`apcnet`。
 
-扩展时应同步修改 `batch_segmentation.sh` 或使用 skill 自带脚本中的 `CV_SEG_MODELS` / `CV_SEG_PRECISIONS` 环境变量。
+默认权重位于 `/workspace/weight/resnet50_v1c-2cccc1ad.pth`。当前镜像内的 `onedl-mmsegmentation/configs/_base_/datasets/cityscapes.py` 已配置为直接从 `/workspace/datasets/cityscapes` 读取数据集，不需要再创建 `data/cityscapes` 软链接。
 
 ---
 
@@ -92,304 +78,239 @@ description: NVIDIA GPU 上 CV 语义分割训练性能评测技能。基于 /wo
 Docker 镜像：
 
 ```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_segmentation
+registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv
 ```
 
-容器内需要具备：
-- Python 3.10
-- PyTorch + CUDA
-- MMEngine
-- onedl-mmcv
-- onedl-mmsegmentation
+容器内需要具备 Python 3.10、PyTorch + CUDA、MMEngine、onedl-mmcv、onedl-mmsegmentation。
 
 ---
 
-
 ## 交互参数映射规则
-
-当用户不使用 `--config`，而是在对话中指定模型、卡数、精度时，生成评测脚本必须按以下规则设置环境变量：
 
 | 用户表达 | 必须设置的变量 | 结果 |
 |---------|----------------|------|
 | `1卡`、`单卡`、`card_count=1` | `export CV_SEG_NGPU=1` | `--nproc_per_node=1`，日志目录包含 `_gpus1_`。 |
 | `8卡`、`八卡`、`card_count=8` | `export CV_SEG_NGPU=8` | `--nproc_per_node=8`，日志目录包含 `_gpus8_`。 |
-| `fp16`、`半精度` | `export CV_SEG_PRECISIONS=fp16` | 使用 `AmpOptimWrapper`。 |
-| `fp32`、`单精度` | `export CV_SEG_PRECISIONS=fp32` | 使用 `OptimWrapper`。 |
 | `fcn` / `deeplabv3` / `pspnet` / `apcnet` | `export CV_SEG_MODELS=<model>` | 运行对应模型配置。 |
 
-如果用户没有指定，默认值为：`CV_SEG_NGPU=1`、`CV_SEG_MODELS=fcn`、`CV_SEG_PRECISIONS=fp16,fp32`，即先跑 fp16，再跑 fp32。
+如果用户没有指定，默认值为：`CV_SEG_NGPU=1`、`CV_SEG_MODELS=fcn`。精度固定为 `fp16,fp32`，不支持通过用户输入或环境变量切换单独精度。
 
-生成的评测脚本必须执行用户验证过的入口：
+生成评测脚本时，如果 `/workspace/code/batch_segmentation.sh` 不存在，应先将 agent 预置的 `/workspace/scripts/batch_segmentation.sh` 复制到 `/workspace/code/batch_segmentation.sh`，再执行：
 
 ```bash
+if [ ! -f /workspace/code/batch_segmentation.sh ] && [ -f /workspace/scripts/batch_segmentation.sh ]; then
+  cp /workspace/scripts/batch_segmentation.sh /workspace/code/batch_segmentation.sh
+  chmod +x /workspace/code/batch_segmentation.sh
+fi
+test -f /workspace/code/batch_segmentation.sh
 bash /workspace/code/batch_segmentation.sh
 ```
-
-不要把 `/workspace/scripts/batch_segmentation.sh` 作为首选入口。`/workspace/scripts` 只是 agent 上传 skill assets 的位置，当前 CV segmentation 以 `/workspace/code/batch_segmentation.sh` 为准。
 
 ---
 
 ## 第一阶段：容器启动
 
-推荐启动命令：
-
 ```bash
 docker run --gpus all \
   --network host --ipc host --shm-size=16g \
-  -it --name ${CV_SEG_CONTAINER_NAME:-cv_seg_bench} \
-  -v ${CV_SEG_HOST_CODE_DIR:-/path/to/cv/code}:/workspace/code:rw \
-  -v ${CV_SEG_HOST_LOG_DIR:-/path/to/cv/logs}:/workspace/logs:rw \
-  -v ${CV_SEG_HOST_DATASET_DIR:-/path/to/cv/datasets}:/workspace/datasets:ro \
-  -v ${CV_SEG_HOST_WEIGHT_DIR:-/path/to/cv/weight}:/workspace/weight:ro \
-  ${CV_SEG_DOCKER_IMAGE:-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:mm_segmentation} \
+  -it --name cv_seg_bench \
+  -v $CV_SEG_PROJECT_ROOT:/workspace/code:rw \
+  -v $CV_SEG_DATA_DIR:/workspace/datasets/cityscapes:ro \
+  -v $CV_SEG_WEIGHT_DIR:/workspace/weight:ro \
+  -v $CV_SEG_LOGS_DIR:/workspace/logs:rw \
+  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv \
   bash
 ```
 
-如果容器名已存在：
+如果容器名已存在：`docker rm -f cv_seg_bench`。
 
-```bash
-docker rm -f ${CV_SEG_CONTAINER_NAME:-cv_seg_bench}
-```
+**注意**：
+- `CV_SEG_PROJECT_ROOT`、`CV_SEG_DATA_DIR`、`CV_SEG_WEIGHT_DIR` 必须在宿主机提供
+- 容器启动后、执行评测前，如果 `/workspace/code/batch_segmentation.sh` 不存在，应将预置的 `/workspace/scripts/batch_segmentation.sh` 复制到 `/workspace/code/batch_segmentation.sh` 并添加执行权限
+- 输出目录 `CV_SEG_LOGS_DIR` 不存在时需先在宿主机创建，或由 executor 创建后再挂载
 
 ---
 
-## 第二阶段：运行评测
+## 第二阶段：容器中执行评测
 
-进入容器后执行：
+### 步骤 1：选择模型与源码目录
+
+容器内代码、数据、权重和日志路径已通过卷挂载固定（详见[环境变量定义](#环境变量定义)）。如果镜像已内置 mmsegmentation 源码，通常无需额外设置目录环境变量。
 
 ```bash
-export CV_SEG_PROJECT_ROOT=${CV_SEG_PROJECT_ROOT:-/workspace/code}
-export CV_SEG_MMSEG_DIR=${CV_SEG_MMSEG_DIR:-/workspace/code/onedl-mmsegmentation}
-export CV_SEG_MMCV_DIR=${CV_SEG_MMCV_DIR:-/workspace/code/onedl-mmcv}
-export CV_SEG_SCRIPT=${CV_SEG_SCRIPT:-/workspace/code/batch_segmentation.sh}
-export CV_SEG_WEIGHT_DIR=${CV_SEG_WEIGHT_DIR:-/workspace/weight}
-export CV_SEG_WEIGHT_PATH=${CV_SEG_WEIGHT_PATH:-${CV_SEG_WEIGHT_DIR}/resnet50_v1c-2cccc1ad.pth}
-export CV_SEG_LOG_DIR=${CV_SEG_LOG_DIR:-/workspace/logs}
-# 必须使用 task config 中的 card_count 设置 CV_SEG_NGPU：1卡任务设为1，8卡任务设为8。
-export CV_SEG_NGPU=${CV_SEG_NGPU:-${CARD_COUNT:-1}}
-export CV_SEG_MODELS=${CV_SEG_MODELS:-fcn}
-export CV_SEG_PRECISIONS=${CV_SEG_PRECISIONS:-fp16,fp32}
+# 选择要测试的模型和 GPU 数
+MODEL_NAME="fcn"              # 可选: fcn, deeplabv3, pspnet, apcnet
+GPU_NUM="${CARD_COUNT:-1}"    # 默认使用 task config 的 card_count，未提供时为 1
+# 精度固定执行 fp16,fp32，不需要设置精度参数
 
-# 如果用户在对话中指定了 1卡/8卡或单个精度 fp16/fp32，必须在运行前覆盖上述变量。
-# 默认不指定精度时会按顺序运行 fp16,fp32。
-# 示例：export CV_SEG_NGPU=8; export CV_SEG_PRECISIONS=fp32
-chmod +x "$CV_SEG_SCRIPT"
+# 如 mmsegmentation 源码在镜像内其他路径，可显式指定
+# export CV_SEG_MMSEG_DIR=/opt/onedl-mmsegmentation
+```
 
-# 创建本次运行 marker，后续只读取 marker 之后新生成/更新的日志，避免误读历史日志。
-CV_SEG_RUN_MARKER=${CV_SEG_RUN_MARKER:-/tmp/cv_seg_run_marker.$(date +%s).$$}
+### 配置文件说明
+
+**关键路径**：
+```text
+/workspace/code/onedl-mmsegmentation   # mmsegmentation 项目目录；也可为镜像内置源码路径
+/workspace/code/onedl-mmcv             # 可选；mmcv 已安装时不需要源码目录
+/workspace/datasets/cityscapes         # Cityscapes 数据集目录
+/workspace/weight                      # 预训练权重目录
+/workspace/logs                        # 训练日志、work-dir 和结果 JSON 输出目录
+/workspace/code/batch_segmentation.sh  # 批量评测脚本；代码/镜像没有时由 skill scripts/batch_segmentation.sh 提供
+```
+
+**注意**：
+- `batch_segmentation.sh` 可直接放在 `/workspace/code/batch_segmentation.sh`；如果运行环境中不存在，则从 agent 预置的 `/workspace/scripts/batch_segmentation.sh` 复制到该路径
+- 脚本会自动查找 mmsegmentation 源码目录；数据集路径由镜像内 `configs/_base_/datasets/cityscapes.py` 直接指向 `/workspace/datasets/cityscapes`
+- `onedl-mmcv` 已通过 `pip install .` 安装到镜像环境时，不需要提供 `/workspace/code/onedl-mmcv`
+
+### 步骤 2：执行训练评测
+
+运行批量评测脚本，训练日志和结果文件将保存至 `/workspace/logs`：
+
+```bash
+mkdir -p /workspace/logs
+if [ ! -f /workspace/code/batch_segmentation.sh ] && [ -f /workspace/scripts/batch_segmentation.sh ]; then
+  cp /workspace/scripts/batch_segmentation.sh /workspace/code/batch_segmentation.sh
+  chmod +x /workspace/code/batch_segmentation.sh
+fi
+test -f /workspace/code/batch_segmentation.sh
+
+export CV_SEG_NGPU="$GPU_NUM"
+export CV_SEG_MODELS="$MODEL_NAME"
+export CV_SEG_RUN_MARKER=/tmp/cv_seg_run_marker.$(date +%s).$$
 touch "$CV_SEG_RUN_MARKER"
 
-cd "$CV_SEG_MMSEG_DIR"
-bash "$CV_SEG_SCRIPT"
-
-# mmengine 会在 --work-dir 下生成时间戳目录和 .log，例如：
-# /workspace/logs/fcn_gpus1_fp16/20260520_032625/20260520_032625.log
-MODEL_NAME=${CV_SEG_MODELS%%,*}
-PRECISION=${CV_SEG_PRECISIONS%%,*}
-CV_SEG_WORK_DIR=${CV_SEG_WORK_DIR:-${CV_SEG_LOG_DIR}/${MODEL_NAME}_gpus${CV_SEG_NGPU}_${PRECISION}}
-CV_SEG_LATEST_LOG=$(find "$CV_SEG_WORK_DIR" -type f -name "*.log" -newer "$CV_SEG_RUN_MARKER" -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
-test -n "$CV_SEG_LATEST_LOG"
-export CV_SEG_LATEST_LOG
-echo "Latest segmentation log from current run: $CV_SEG_LATEST_LOG"
+# 如 mmsegmentation 源码在镜像内其他路径，可显式指定
+# export CV_SEG_MMSEG_DIR=/opt/onedl-mmsegmentation
+bash /workspace/code/batch_segmentation.sh
 ```
 
+上述指令的默认行为：
+- 运行 `fcn` 模型
+- 固定分别执行 `fp16` 和 `fp32` 两种精度
+- 使用 `GPU_NUM` 指定的 GPU 数启动分布式训练
+- 训练输出目录为 `/workspace/logs/${MODEL_NAME}_gpus${GPU_NUM}_${PRECISION}`
+- 所有模型和精度组合的结构化结果统一写入 `/workspace/logs/eval_result.json`
 
-### 1卡与8卡选择
-
-- 使用 `config/task/h200_cv_segmentation_1card.json` 时，`card_count=1`，评测脚本应导出 `CV_SEG_NGPU=1`。
-- 使用 `config/task/h200_cv_segmentation_8card.json` 时，`card_count=8`，评测脚本应导出 `CV_SEG_NGPU=8`。
-- `batch_segmentation.sh` 会读取 `CV_SEG_NGPU` 并传给 `torch.distributed.launch --nproc_per_node`。
-- 日志目录会随卡数和精度变化，例如 `/workspace/logs/fcn_gpus1_fp16/...`、`/workspace/logs/fcn_gpus1_fp32/...`、`/workspace/logs/fcn_gpus8_fp16/...`、`/workspace/logs/fcn_gpus8_fp32/...`。
-
-运行前检查：
-
+**验证执行结果**：
 ```bash
-test -d "$CV_SEG_MMSEG_DIR"
-test -d "$CV_SEG_MMCV_DIR"
-test -f "$CV_SEG_SCRIPT"
-test -d "$CV_SEG_WEIGHT_DIR"
-test -f "$CV_SEG_WEIGHT_PATH"
+# 查看最新训练日志
+PRECISION="fp16"
+LOG_DIR=/workspace/logs/${MODEL_NAME}_gpus${GPU_NUM}_${PRECISION}
+LATEST_LOG=$(find "$LOG_DIR" -type f -name "*.log" -newer "$CV_SEG_RUN_MARKER" -printf "%T@ %p
+" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
+test -n "$LATEST_LOG"
+tail -50 "$LATEST_LOG"
+
+# 检查结果文件
+cat /workspace/logs/eval_result.json
 ```
 
 ---
 
+## 评测输出产物
 
-## 结果文件命名与汇总规则
+训练日志和汇总结果均输出到 `/workspace/logs`。
 
-生成评测脚本时禁止把所有单项结果固定写到 `/workspace/logs/result.json`，否则不同模型、卡数或精度会互相覆盖。
+| 文件路径 | 描述 |
+| :--- | :--- |
+| `/workspace/logs/${MODEL_NAME}_gpus${GPU_NUM}_${PRECISION}/<timestamp>/<timestamp>.log` | MMEngine 训练日志，包含 `AVG_ITER_TIME`、`DATA`、`OP` 指标 |
+| `/workspace/logs/eval_result.json` | 本次运行所有模型、GPU 数和精度组合的汇总结果 |
 
-每个模型、卡数、精度组合必须写入独立结果文件：
+**注意**：评测固定执行 `fp16,fp32` 两种精度；当一次运行多个模型时，所有组合的结果都写入同一个 `eval_result.json`，不再生成额外的 `*_result.json` 文件。
 
-```bash
-RESULT_JSON="${CV_SEG_LOG_DIR}/${MODEL_NAME}_gpus${CV_SEG_NGPU}_${PRECISION}_result.json"
-```
-
-示例：
-
-```text
-/workspace/logs/fcn_gpus1_fp16_result.json
-/workspace/logs/fcn_gpus1_fp32_result.json
-/workspace/logs/fcn_gpus8_fp16_result.json
-/workspace/logs/fcn_gpus8_fp32_result.json
-```
-
-同时，生成评测脚本必须把本次运行产生的所有单项结果汇总写入：
-
-```text
-/workspace/logs/eval_result.json
-```
-
-`eval_result.json` 格式建议如下：
+**汇总结果示例**：
 
 ```json
 {
   "status": "success",
   "task": "cv_segmentation",
-  "model": "fcn",
-  "gpu_count": 8,
+  "model": "fcn,pspnet",
+  "gpu_count": 1,
   "precisions": ["fp16", "fp32"],
   "results": {
-    "fcn_gpus8_fp16": {
+    "fcn_gpus1_fp16": {
       "model": "fcn",
-      "gpu_count": 8,
+      "gpu_count": 1,
       "precision": "fp16",
-      "log": "/workspace/logs/fcn_gpus8_fp16/<timestamp>/<timestamp>.log",
-      "result_json": "/workspace/logs/fcn_gpus8_fp16_result.json",
-      "avg_iter_time": 0.0,
-      "data_time": 0.0,
-      "op_time": 0.0
+      "log": "/workspace/logs/fcn_gpus1_fp16/<timestamp>/<timestamp>.log",
+      "avg_iter_time": 0.1032,
+      "data_time": 0.0067,
+      "op_time": 0.0965
     },
-    "fcn_gpus8_fp32": {
-      "model": "fcn",
-      "gpu_count": 8,
+    "pspnet_gpus1_fp32": {
+      "model": "pspnet",
+      "gpu_count": 1,
       "precision": "fp32",
-      "log": "/workspace/logs/fcn_gpus8_fp32/<timestamp>/<timestamp>.log",
-      "result_json": "/workspace/logs/fcn_gpus8_fp32_result.json",
-      "avg_iter_time": 0.0,
-      "data_time": 0.0,
-      "op_time": 0.0
+      "log": "/workspace/logs/pspnet_gpus1_fp32/<timestamp>/<timestamp>.log",
+      "avg_iter_time": 0.1190,
+      "data_time": 0.0071,
+      "op_time": 0.1119
     }
   }
 }
 ```
 
-如果 `CV_SEG_PRECISIONS=fp16,fp32`，生成脚本必须分别解析 fp16 和 fp32 的 mmengine 日志，写两个单项结果文件，并把两个结果都写入同一个 `/workspace/logs/eval_result.json`。如果用户只指定 `fp32`，则 `eval_result.json` 只包含 `fp32` 的结果。
-
-下面是结果汇总逻辑的参考实现，生成脚本应采用等价逻辑：
+**验证输出文件**：
 
 ```bash
-python3 - <<'PY'
-import glob, json, os, re
-
-model = os.environ.get("CV_SEG_MODELS", "fcn").split(",")[0].strip()
-gpu = os.environ.get("CV_SEG_NGPU", "1")
-log_dir = os.environ.get("CV_SEG_LOG_DIR", "/workspace/logs")
-marker = os.environ.get("CV_SEG_RUN_MARKER")
-precisions = [p.strip() for p in os.environ.get("CV_SEG_PRECISIONS", "fp16,fp32").split(",") if p.strip()]
-marker_mtime = os.path.getmtime(marker) if marker and os.path.exists(marker) else 0
-
-results = {}
-for precision in precisions:
-    work_dir = f"{log_dir}/{model}_gpus{gpu}_{precision}"
-    logs = [p for p in glob.glob(f"{work_dir}/*/*.log") if os.path.getmtime(p) > marker_mtime]
-    logs.sort(key=os.path.getmtime, reverse=True)
-    log = logs[0] if logs else ""
-    text = open(log, "r", encoding="utf-8", errors="ignore").read() if log else ""
-    rows = re.findall(r"AVG_ITER_TIME:\s*([0-9.]+)s\s*\|\s*DATA:\s*([0-9.]+)s\s*\|\s*OP:\s*([0-9.]+)s", text)
-    last = rows[-1] if rows else None
-    key = f"{model}_gpus{gpu}_{precision}"
-    item = {
-        "model": model,
-        "gpu_count": int(gpu),
-        "precision": precision,
-        "log": log,
-        "avg_iter_time": float(last[0]) if last else None,
-        "data_time": float(last[1]) if last else None,
-        "op_time": float(last[2]) if last else None,
-    }
-    item_path = os.path.join(log_dir, f"{key}_result.json")
-    item["result_json"] = item_path
-    with open(item_path, "w", encoding="utf-8") as f:
-        json.dump(item, f, ensure_ascii=False, indent=2)
-    results[key] = item
-
-aggregate = {
-    "status": "success" if results and all(v.get("avg_iter_time") is not None for v in results.values()) else "partial",
-    "task": "cv_segmentation",
-    "model": model,
-    "gpu_count": int(gpu),
-    "precisions": precisions,
-    "results": results,
-}
-with open(os.path.join(log_dir, "eval_result.json"), "w", encoding="utf-8") as f:
-    json.dump(aggregate, f, ensure_ascii=False, indent=2)
-print("eval result json written: /workspace/logs/eval_result.json")
-PY
+cat /workspace/logs/eval_result.json
 ```
 
 ---
 
 ## 关键性能指标
 
-训练日志中应包含 `CustomIterTimerHook` 输出，例如：
+训练日志中应包含 AVG_ITER_TIME 输出，例如：
 
 ```text
 === AVG_ITER_TIME: 0.1032s | DATA: 0.0067s | OP: 0.0965s ===
 ```
 
-关注指标：
+`eval_result.json` 会记录每个模型、GPU 数和精度组合的详细性能数据。
+
+#### 指标说明
 
 | 类型 | 指标 | 说明 |
-|---|---|---|
-| 性能（必采） | `AVG_ITER_TIME` | 平均迭代耗时（秒），核心吞吐指标。 |
-| 性能（辅助） | `DATA` | 数据加载耗时。 |
-| 性能（辅助） | `OP` | 纯计算耗时。 |
+|------|------|------|
+| 性能（必采） | `avg_iter_time` | 平均每轮训练迭代耗时，核心训练性能指标，数值越低越好 |
+| 性能（辅助） | `data_time` | 平均数据读取和准备耗时 |
+| 性能（辅助） | `op_time` | 平均算子和反向传播等计算耗时 |
+| 元信息 | `model` / `gpu_count` / `precision` | 模型、GPU 数和精度配置，用于区分不同测试组合 |
 
-采集命令：
+#### 指标采集
+
+优先读取汇总结果文件：
 
 ```bash
-# 优先使用运行阶段导出的 CV_SEG_LATEST_LOG；如果单独执行采集命令，必须提供本次运行的 marker。
-if [ -n "${CV_SEG_LATEST_LOG:-}" ]; then
-  LOG="$CV_SEG_LATEST_LOG"
-else
-  MODEL_NAME=${CV_SEG_MODELS%%,*}
-  PRECISION=${CV_SEG_PRECISIONS%%,*}
-  CV_SEG_WORK_DIR=${CV_SEG_WORK_DIR:-${CV_SEG_LOG_DIR:-/workspace/logs}/${MODEL_NAME:-fcn}_gpus${CV_SEG_NGPU:-1}_${PRECISION:-fp16}}
-  test -n "${CV_SEG_RUN_MARKER:-}"
-  LOG=$(find "$CV_SEG_WORK_DIR" -type f -name "*.log" -newer "$CV_SEG_RUN_MARKER" -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
-fi
-test -n "$LOG"
-grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "AVG_ITER_TIME: \K[0-9.]+"
-grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "DATA: \K[0-9.]+"
-grep "AVG_ITER_TIME" "$LOG" | tail -1 | grep -oP "OP: \K[0-9.]+"
+python3 -c "
+import json
+path='/workspace/logs/eval_result.json'
+print(json.dumps(json.load(open(path, 'r', encoding='utf-8')), indent=2, ensure_ascii=False))
+"
 ```
 
-JSON 结果输出必须遵循上方「结果文件命名与汇总规则」，生成单项 `*_result.json` 并汇总到 `/workspace/logs/eval_result.json`。
+如需从训练日志临时提取，可使用：
+
+```bash
+MODEL_NAME=${MODEL_NAME:-fcn}
+GPU_NUM=${GPU_NUM:-${CARD_COUNT:-1}}
+PRECISION=${PRECISION:-fp16}
+LOG_DIR=/workspace/logs/${MODEL_NAME}_gpus${GPU_NUM}_${PRECISION}
+LOG=$(find "$LOG_DIR" -type f -name "*.log" -printf "%T@ %p
+" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-)
+test -n "$LOG"
+grep "AVG_ITER_TIME" "$LOG" | tail -1
+```
 
 ---
 
 ## 常见问题
 
-1. **找不到 `/workspace/code/batch_segmentation.sh`**
-   - 检查 Docker 是否挂载了宿主机 `/workspace/code` 到容器 `/workspace/code`。
-   - 或设置 `CV_SEG_SCRIPT` 指向实际脚本路径。
-
-2. **找不到 `onedl-mmsegmentation` 或 `onedl-mmcv`**
-   - 检查 `CV_SEG_MMSEG_DIR` 和 `CV_SEG_MMCV_DIR`。
-   - 当前用户实现期望它们分别位于 `/workspace/code/onedl-mmsegmentation` 和 `/workspace/code/onedl-mmcv`。
-
-3. **预训练权重加载失败**
-   - 检查 `CV_SEG_WEIGHT_PATH=/workspace/weight/resnet50_v1c-2cccc1ad.pth` 是否存在。
-   - 若权重在其他目录，修改 `CV_SEG_WEIGHT_PATH` 并保证 Docker 挂载可见。
-
-4. **数据集路径错误**
-   - 检查 mmseg config 中 Cityscapes 的 `data_root`。
-   - 如需覆盖，先确认 config 是否支持环境变量或在命令中追加 `--cfg-options`。
-
-5. **没有 `AVG_ITER_TIME`**
-   - 确认 `custom_iter_timer_hook.py` 已被项目 config 引入，或已复制到 `onedl-mmsegmentation` 可导入路径。
-   - 检查训练是否跑到 hook 的统计区间。
-   - 不要直接按 `ls -t` 读取历史最新日志；应使用 `CV_SEG_RUN_MARKER`，只查找 marker 之后生成/更新的 `.log`。
-
-6. **GPU 数不匹配**
-   - 当前脚本默认 `NGPU=1`。若要跑 8 卡，需要同步修改脚本的 `NGPU` / `--nproc_per_node`，并确认容器可见 GPU 数。
+1. **找不到 `batch_segmentation.sh`**：检查 `/workspace/code/batch_segmentation.sh` 是否存在；如果不存在，应将 agent 预置的 `/workspace/scripts/batch_segmentation.sh` 复制到 `/workspace/code/batch_segmentation.sh` 并添加执行权限。
+2. **找不到 mmsegmentation 源码目录**：确认镜像内或挂载目录中存在包含 `configs/` 和 `tools/train.py` 的 mmsegmentation 源码目录；必要时设置 `CV_SEG_MMSEG_DIR=/path/to/onedl-mmsegmentation`。`onedl-mmcv` 已安装时不需要源码目录。
+3. **预训练权重加载失败**：检查 `/workspace/weight/resnet50_v1c-2cccc1ad.pth` 是否存在。
+4. **数据集路径错误**：检查 `/workspace/datasets/cityscapes` 是否包含 Cityscapes 数据集；当前镜像内 `configs/_base_/datasets/cityscapes.py` 应直接从该路径读取。
+5. **没有 `AVG_ITER_TIME`**：确认项目配置已启用 AVG_ITER_TIME 日志输出，且不要直接读取历史最新日志，应使用 `CV_SEG_RUN_MARKER`。
+6. **GPU 数不匹配**：导出 `CV_SEG_NGPU=<card_count>`，并确认容器可见 GPU 数。
