@@ -266,7 +266,7 @@ tokens_per_sec_per_gpu: 0
 2. 丢弃前 10 步与末尾 10 步，对剩余取算术平均
 3. 计算总吞吐 = 单卡均值 × `world_size`（默认 8）
 4. 把 metrics 写入 `/workspace/results/result.json`（`{"status": "success", "metrics": {...}}` 格式）
-5. 同时把 `result.json` 的内容回显到 stdout（前缀 `result.json: `），供 mcp__agent 从标准输出解析
+5. 同时把 `result.json` 的内容回显到 stdout（前缀 `result.json: `），供 agent 从标准输出解析
 
 ```bash
 python - <<'EOF'
