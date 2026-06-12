@@ -40,7 +40,7 @@ registry.h.pjlab.org.cn/ailab-sys-sys_gpu/tiddler:nvidia-nlp-finetune
 **说明**：
 - **MODEL_DIR** 需要外部提供，挂载预训练模型权重目录（HuggingFace 格式）
 - **DATASET_DIR** 需要外部提供，挂载微调数据集目录
-- **CODE_DIR** 需要外部提供，挂载 alpaca_finetune 训练代码目录。`finetune.sh` 在 `$CODE_DIR/alpaca-lora/` 下执行：LoRA 权重输出到 `$CODE_DIR/alpaca-lora/lora-adapter/`，训练日志写入 `$CODE_DIR/alpaca-lora/finetune_128_4_closeint8.log`（batch size = 128，micro batch size = 4）
+- **CODE_DIR** 需要外部提供，挂载 alpaca_finetune 训练代码目录。`finetune.sh` 在 `$CODE_DIR/alpaca-lora/` 下执行：LoRA 权重输出到 `$CODE_DIR/alpaca-lora/lora-adapter/`；训练日志由 `finetune.sh` 直接写入 `$LOGS_DIR/finetune_128_4_closeint8.log`（batch size = 128，micro batch size = 4）
 - **RESULTS_DIR** 需要外部提供，挂载评测结果目录。所有结构化产物（metrics、状态汇总）以 `result.json` 形式写入此目录,供上层 agent 拉取与展示
 - **LOGS_DIR** 需要外部提供，挂载日志目录。训练日志、`stdout`/`stderr` 重定向、容器内异常堆栈等运行期文本均写入此目录，便于事后排查
 - 表格中的"映射目录"列指明了容器启动时 `-v` 参数的挂载路径，即宿主机路径映射到容器内的路径
@@ -104,7 +104,7 @@ registry.h.pjlab.org.cn/ailab-sys-sys_gpu/tiddler:nvidia-nlp-finetune
   └── finetune_128_4_closeint8.log   # 训练日志（finetune.sh 重定向产物）
   ```
 
-  **注意**：`finetune.sh` 实际把训练日志写在 `$CODE_DIR/alpaca-lora/finetune_<bs>_<mbs>_closeint8.log`（相对路径重定向）；步骤 2 末尾会通过 `cp finetune_128_4_closeint8.log /workspace/logs/` 把它同步到 `$LOGS_DIR`，从而与步骤 3 中 `log_path = '/workspace/logs/finetune_128_4_closeint8.log'` 对齐。如不希望多一次拷贝，可改 `finetune.sh` 让 `$LOG_FILE` 直接指向 `$LOGS_DIR/`。
+  **注意**：`finetune.sh` 内 `$LOG_FILE` 已直接指向 `$LOGS_DIR/finetune_<bs>_<mbs>_closeint8.log`，训练日志直接落到该路径。步骤 3 中 `log_path = '/workspace/logs/finetune_128_4_closeint8.log'` 即为该文件的容器内路径。
 
 **注意**：
 - 必需的参数（`MODEL_DIR`、`DATASET_DIR`、`CODE_DIR`、`RESULTS_DIR`、`LOGS_DIR`）必须提供
@@ -171,7 +171,7 @@ ls -lh /workspace/code/alpaca_finetune/alpaca-lora/
 ```bash
 cd /workspace/code/alpaca_finetune/alpaca-lora
 
-# 执行微调（finetune.sh 在 ./alpaca-lora/ 下生成 finetune_128_4_closeint8.log）
+# 执行微调（finetune.sh 直接在 $LOGS_DIR 下生成 finetune_128_4_closeint8.log）
 bash finetune.sh
 ```
 
@@ -193,7 +193,7 @@ tail -50 /workspace/logs/finetune_128_4_closeint8.log
 
 **注意**：
 - 必须先 `cd` 到 `alpaca-lora/` 目录再执行，否则 `--output_dir './lora-adapter'` 与日志重定向的相对路径会错位
-- 如果切换了 batch size / micro batch size，日志文件名会变（格式 `finetune_<bs>_<mbs>_closeint8.log`），上面的 `cp` 与步骤 3 中的 `log_path` 都需要同步更新
+- 如果切换了 batch size / micro batch size，日志文件名会变（格式 `finetune_<bs>_<mbs>_closeint8.log`），步骤 3 中的 `log_path` 需要同步更新
 
 ### 步骤 3：指标采集
 
@@ -224,7 +224,7 @@ tail -50 /workspace/logs/finetune_128_4_closeint8.log
 1. 从训练日志中提取最后一次包含 `train_tokens_per_second` 的汇总 dict
 2. 计算 `tokens_per_sec_per_gpu`（总吞吐 / nproc）
 3. 把 metrics 写入 `/workspace/results/result.json`（`{"status": "success", "metrics": {...}}` 格式）
-4. 同时把 `result.json` 的内容回显到 stdout（前缀 `result.json: `），供 mcp__agent 从标准输出解析
+4. 同时把 `result.json` 的内容回显到 stdout（前缀 `result.json: `），供 agent 从标准输出解析
 
 ```bash
 python - <<'EOF'
