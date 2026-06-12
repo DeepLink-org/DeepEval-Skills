@@ -404,6 +404,8 @@ test_transformer_decoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_siz
 
 ### 指标采集
 
+请严格使用下列代码进行指标采集
+
 **GEMM / Conv2d 算子 — 从 CSV 文件全量采集**：
 
 ```bash
@@ -425,14 +427,8 @@ for f in ['/workspace/operators/gemm_f16.csv', '/workspace/operators/gemm_f32.cs
     result[key] = {
         'dtypes': dtypes,
         'baseline': baseline_vals,
-        'baseline_avg': float(df['baseline'].mean()),
         'data': df.to_dict(orient='records')
     }
-    print(f'=== {f} ===')
-    for col in df.columns:
-        print(f'  [{col}] dtype={df[col].dtype}')
-    print(f'baseline_avg={result[key][\"baseline_avg\"]:.3f}ms')
-    print()
 
 with open('/workspace/results/result.json', 'w') as fp:
     json.dump(result, fp, indent=2, default=str)
@@ -459,25 +455,16 @@ for csv_file in ['/workspace/results/ltout_gpu.csv', '/workspace/results/ltout_f
     # 提取 baseline 列（如存在），否则提取 time 列
     metric_col = 'baseline' if 'baseline' in df.columns else ('time' if 'time' in df.columns else None)
     metric_vals = df[metric_col].dropna().tolist() if metric_col else []
-    metric_avg = float(df[metric_col].mean()) if metric_col else None
     result[key] = {
         'dtypes': dtypes,
         'metric_col': metric_col,
         'metric_values': metric_vals,
-        'metric_avg': metric_avg,
         'data': df.to_dict(orient='records')
     }
-    print(f'=== {csv_file} ===')
-    print(f'Total ops: {len(df)}')
-    for col in df.columns:
-        print(f'  [{col}] dtype={df[col].dtype}')
-    if metric_col:
-        print(f'{metric_col}_avg={metric_avg}')
-    print()
 
-with open('/workspace/results/result.json', 'a') as fp:
+with open('/workspace/results/result.json', 'w') as fp:
     json.dump(result, fp, indent=2, default=str)
-print('result.json appended to /workspace/results/')
+print('result.json written to /workspace/results/')
 "
 ```
 
