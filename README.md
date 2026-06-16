@@ -1,4 +1,4 @@
-# AIBenchAgent-skills
+# DeepEval-Skills
 
 人工智能软硬件验证平台 评测 Skills
 
@@ -7,7 +7,7 @@
 
 ## 快速开始
 
-AIBenchAgent Skills 兼容 **Claude Code**、**Cursor**、**Codex** 以及任何支持 [Agent Skills 标准](https://agentskills.io/specification) 的智能体。也可支持Deeplink自研的评测智能体**AIBENCHAGENT**（已内置**AIBenchAgent-skills**）进行开箱即用评测。
+DeepEval-Skills 兼容 **Claude Code**、**Cursor**、**Codex** 以及任何支持 [Agent Skills 标准](https://agentskills.io/specification) 的智能体。也可支持Deeplink自研的评测智能体**DeepEval**（已内置**DeepEval-Skills**）进行开箱即用评测。
 
 ### npx（适用于所有智能体）
 
@@ -15,25 +15,25 @@ AIBenchAgent Skills 兼容 **Claude Code**、**Cursor**、**Codex** 以及任何
 
 ```bash
 # 克隆本仓库到本地
-git clone <repo-url> AIBenchAgent-skills
+git clone <repo-url> DeepEval-Skills
 
 # 查看本仓库中可用的 skills
-npx skills add ./AIBenchAgent-skills --list
+npx skills add ./DeepEval-Skills --list
 
 # 批量安装 skill 到当前项目
-npx skills add ./AIBenchAgent-skills/skills/NVIDIA -s '*'
+npx skills add ./DeepEval-Skills/skills/NVIDIA -s '*'
 
 # 安装指定 skill 到当前项目
-npx skills add ./AIBenchAgent-skills/skills/NVIDIA/nlp/nvidia-nlp-inference
+npx skills add ./DeepEval-Skills/skills/NVIDIA/nlp/nvidia-nlp-inference
 
 # 仅安装到指定智能体
-npx skills add ./AIBenchAgent-skills/skills/NVIDIA -s '*' --agent claude-code
+npx skills add ./DeepEval-Skills/skills/NVIDIA -s '*' --agent claude-code
 ```
 
 
-### AIBENCHAGENT（推荐 — 内置支持，开箱即用）
+### DeepEval（推荐 — 内置支持，开箱即用）
 
-**AIBENCHAGENT** 是面向 AI 软硬件验证评测场景的智能代理平台，已内置本仓库的全部 Skills，无需手动安装即可直接使用。同时针对评测链路进行定制优化，减少冗余环节，降低端到端agent评测时延。
+**DeepEval** 是面向 AI 软硬件验证评测场景的智能代理平台，已内置本仓库的全部 Skills，无需手动安装即可直接使用。同时针对评测链路进行定制优化，减少冗余环节，降低端到端agent评测时延。
 
 **核心优势：**
 
@@ -44,7 +44,7 @@ npx skills add ./AIBenchAgent-skills/skills/NVIDIA -s '*' --agent claude-code
 - **持续进化**：Agent 积累每次执行的成功与失败经验，自动优化后续评测策略
 - **性能调优闭环**：未来支持根据评测结果自动生成调优建议并回归验证，形成"评测→诊断→优化→再评测"闭环
 
-> AIBENCHAGENT 暂未开源。如需合作参与 **AIBenchAgent-skills** 和 **AIBENCHAGENT** 共建，欢迎联系 **DeepLink** 团队洽谈合作。
+> DeepEval 暂未开源。如需合作参与 **DeepEval-Skills** 和 **DeepEval** 共建，欢迎联系 **DeepLink** 团队洽谈合作。
 
 ## Skill 导航
 
@@ -96,7 +96,7 @@ npx skills add ./AIBenchAgent-skills/skills/NVIDIA -s '*' --agent claude-code
 ## 仓库结构
 
 ```
-AIBenchAgent-skills/
+DeepEval-Skills/
 ├── skills/                          # Skill 目录（按芯片/场景嵌套组织）
 │   ├── NVIDIA/                      # NVIDIA GPU 评测
 │   │   ├── nlp/                     #   语言场景
