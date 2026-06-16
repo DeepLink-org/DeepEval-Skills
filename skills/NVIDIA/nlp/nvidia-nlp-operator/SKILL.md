@@ -101,7 +101,7 @@ description: NVIDIA GPU 上 CUDA 算子性能评测技能。支持 GEMM、Conv2d
 
 **Docker 镜像**：
 ```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:operate
+swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-operator:latest
 ```
 
 容器内已预装：
@@ -161,7 +161,7 @@ docker run -dit \
   -v $OPERATOR_PROJECT_ROOT:/workspace/operators:rw \
   -v $OPERATOR_RESULTS_DIR:/workspace/results:rw \
   -v $OPERATOR_LOGS_DIR:/workspace/logs:rw \
-  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:operate \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-operator:latest \
   /bin/bash
 ```
 
@@ -479,7 +479,7 @@ grep "Time per iteration" /workspace/logs/transformer_block.log
 ## 常见问题
 
 1. **容器启动失败**
-   - **镜像不存在**：确认镜像 `registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:operate` 已拉取
+   - **镜像不存在**：确认镜像 `swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-operator:latest` 已拉取
    - **GPU 不可用**：检查 `nvidia-smi` 是否能正常显示 GPU，确认 NVIDIA 驱动和 nvidia-docker 已安装
    - **路径不存在**：确认 `OPERATOR_PROJECT_ROOT`、`OPERATOR_RESULTS_DIR`、`OPERATOR_LOGS_DIR` 路径在宿主机上存在
 
