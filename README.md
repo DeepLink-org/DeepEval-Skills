@@ -30,21 +30,14 @@ npx skills add ./DeepEval-Skills/skills/NVIDIA/nlp/nvidia-nlp-inference
 npx skills add ./DeepEval-Skills/skills/NVIDIA -s '*' --agent claude-code
 ```
 
+claude-code 使用示例
+```
+> 我要评测NVIDIA上GEMM算子的性能
+> [Skill自动加载] nvidia-nlp-operator 
+> [开始自动化评测流程]
 
-### DeepEval（推荐 — 内置支持，开箱即用）
+```
 
-**DeepEval** 是面向 AI 软硬件验证评测场景的智能代理平台，已内置本仓库的全部 Skills，无需手动安装即可直接使用。同时针对评测链路进行定制优化，减少冗余环节，降低端到端agent评测时延。
-
-**核心优势：**
-
-- **低人工介入**：从配置收集、环境创建、脚本生成到结果分析，全流程由 Agent 自动完成，消除手工环节，提高评测效率
-- **多芯片覆盖**：适配 NVIDIA GPU、华为昇腾等不同硬件平台，一次定义、多端运行
-- **场景丰富**：算子、训练、推理、微调、强化学习——开箱即用
-- **自我修复**：执行失败时自动诊断原因并重试，无需人工排查，提升成功率
-- **持续进化**：Agent 积累每次执行的成功与失败经验，自动优化后续评测策略
-- **性能调优闭环**：未来支持根据评测结果自动生成调优建议并回归验证，形成"评测→诊断→优化→再评测"闭环
-
-> DeepEval 暂未开源。如需合作参与 **DeepEval-Skills** 和 **DeepEval** 共建，欢迎联系 **DeepLink** 团队洽谈合作。
 
 ## Skill 导航
 
