@@ -18,7 +18,7 @@ DeepEval-Skills 兼容 **Claude Code**、**Cursor**、**Codex** 以及任何支�
 git clone https://github.com/DeepLink-org/DeepEval-Skills.git DeepEval-Skills
 
 # 查看本仓库中可用的 skills
-npx skills add ./DeepEval-Skills --list
+npx skills add ./DeepEval-Skills/skills --list
 
 # 批量安装 skill 到当前项目
 npx skills add ./DeepEval-Skills/skills/NVIDIA -s '*'
