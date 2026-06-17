@@ -86,7 +86,7 @@ description: NVIDIA GPU 上 Stable Diffusion 文生图推理任务的评测技�
 
 **Docker 镜像**：
 ```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:sd-infer
+swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-mm-t2i:latest
 ```
 
 容器内已预装：
@@ -149,7 +149,7 @@ docker run -it \
   -v $SD_CODE_DIR:/workspace/code:rw \
   -v $SD_LOGS_DIR:/workspace/logs:rw \
   -v $SD_TMP_DIR:/workspace/tmp:rw \
-  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:sd-infer \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-mm-t2i:latest \
   /bin/bash
 ```
 
