@@ -22,7 +22,7 @@ description: NVIDIA GPU 上 Qwen3-8B 模型预训练性能评测技能（基于 
 
 **Docker 镜像**：
 ```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:25.09.00
+swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-training:latest
 ```
 
 容器内已预装 NeMo、PyTorch、Megatron-LM 等，无需在宿主机额外安装。
@@ -146,7 +146,7 @@ docker run -it \
   -v $CODE_DIR:/workspace/code/qwen_pretrain:rw \
   -v $RESULTS_DIR:/workspace/results:rw \
   -v $LOGS_DIR:/workspace/logs:rw \
-  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:25.09.00 \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-training:latest \
   bash
 ```
 

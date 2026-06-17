@@ -23,7 +23,7 @@ description: NVIDIA GPU 上基于 sglang 的 DeepSeek 文本推理评测技能�
 
 **Docker 镜像**：
 ```bash
-registry.h.pjlab.org.cn/ailab-sys/sglang:nightly-dev-20251208-5e2cda61
+swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-inference:latest
 ```
 
 容器内已预装 sglang 及相关依赖，可直接调用：
@@ -119,7 +119,7 @@ docker run -it \
   -v $DATASET_DIR:/data/datasets:ro \
   -v $RESULTS_DIR:/workspace/results:rw \
   -v $LOGS_DIR:/workspace/logs:rw \
-  registry.h.pjlab.org.cn/ailab-sys/sglang:nightly-dev-20251208-5e2cda61 \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-inference:latest \
   bash
 ```
 
