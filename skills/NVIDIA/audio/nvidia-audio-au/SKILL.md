@@ -114,7 +114,7 @@ description: NVIDIA GPU 上语音理解模型推理性能评测技能。支持 l
 
 **Docker 镜像**：
 ```bash
-117.48.149.97:5000/eval-test/lang-id-voxlingua107-ecapa:gpu-v1.0.0
+swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-audio-au:latest
 ```
 
 容器内已预装：
@@ -140,7 +140,7 @@ docker run -itd \
   -v $AU_DATA_DIR:/workspace/datasets:ro \
   -v $AU_INFERENCE_OUTPUT:/workspace/results/${MODEL_NAME}:rw \
   -v $AU_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \
-  117.48.149.97:5000/eval-test/lang-id-voxlingua107-ecapa:gpu-v1.0.0
+  swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-audio-au:latest
 ```
 
 **公共参数说明**：
@@ -355,7 +355,7 @@ except Exception as e:
 1. **Docker 容器启动失败**
    - **容器名已存在**：确认不存在同名容器 `docker rm -f au-eval`
    - **GPU 不可用**：确认宿主机上 `nvidia-smi` 正常，GPU 驱动已安装
-   - **镜像未拉取**：确认镜像 `117.48.149.97:5000/eval-test/lang-id-voxlingua107-ecapa:gpu-v1.0.0` 已 pull 到本地
+   - **镜像未拉取**：确认镜像 `swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-audio-au:latest` 已 pull 到本地
    - **共享内存不足**：如遇到内存错误，可增加 `--shm-size` 参数值（如 `256g`）
 
 2. **容器内找不到 GPU 设备**
