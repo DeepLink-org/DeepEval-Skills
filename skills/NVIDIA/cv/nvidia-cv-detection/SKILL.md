@@ -85,7 +85,7 @@ description: NVIDIA GPU 上 CV 目标检测训练性能评测技能。基于 /wo
 Docker 镜像：
 
 ```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv
+swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-cv:latest
 ```
 
 容器内需要具备 Python 3.10、PyTorch + CUDA、MMEngine、onedl-mmcv、onedl-mmdetection。
@@ -125,7 +125,7 @@ docker run --gpus all \
   -v $CV_DET_DATA_DIR:/workspace/datasets/coco:ro \
   -v $CV_DET_WEIGHT_DIR:/workspace/weight:ro \
   -v $CV_DET_LOGS_DIR:/workspace/logs:rw \
-  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-cv:latest \
   bash
 ```
 

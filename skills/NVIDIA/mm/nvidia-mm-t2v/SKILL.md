@@ -78,7 +78,7 @@ description: NVIDIA GPU 上 Open-Sora v2 文生视频单卡推理性能评测技
 Docker 镜像：
 
 ```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:torch2.4-cu12-fla3
+swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-mm-t2v:latest
 ```
 
 容器内需要具备 Python 3.10、PyTorch 2.4 + CUDA、torchrun、colossalai、mmengine、flash-attn、ftfy、liger-kernel 等 Open-Sora 推理依赖。
@@ -121,7 +121,7 @@ docker run --gpus all \
   -v $MM_T2V_PROJECT_ROOT:/workspace/code:rw \
   -v $MM_T2V_WEIGHT_DIR:/workspace/weight:ro \
   -v $MM_T2V_LOGS_DIR:/workspace/logs:rw \
-  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:torch2.4-cu12-fla3 \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-mm-t2v:latest \
   bash
 ```
 
