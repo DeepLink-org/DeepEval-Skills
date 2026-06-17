@@ -71,7 +71,7 @@ description: NVIDIA GPU 上 CV 预训练/分类模型训练性能评测技能。
 Docker 镜像：
 
 ```bash
-registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv
+swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-cv:latest
 ```
 
 容器内需要具备 Python 3.10、PyTorch + CUDA、MMEngine、onedl-mmcv、onedl-mmpretrain。
@@ -110,7 +110,7 @@ docker run --gpus all \
   -v $CV_PRE_PROJECT_ROOT:/workspace/code:rw \
   -v $CV_PRE_DATA_DIR:/workspace/datasets/imagenet:ro \
   -v $CV_PRE_LOGS_DIR:/workspace/logs:rw \
-  registry.h.pjlab.org.cn/ailab-sys-sys_gpu/nemo:cv \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-cv:latest \
   bash
 ```
 
