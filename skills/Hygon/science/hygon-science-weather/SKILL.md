@@ -114,7 +114,7 @@ description: Hygon DCU 上全球中期天气预报模型推理与性能评测技
 
 **Docker 镜像**：
 ```bash
-onescience-0.3.0:pytorch2.5.1-ubuntu22.04-dtk25.04.2-py3.10
+swr.cn-north-1.myhuaweicloud.com/deeplink/hygon-science-weather:latest
 ```
 
 容器内已预装：
@@ -204,7 +204,7 @@ docker run -it \
   -v $WEATHER_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \
   --group-add video --cap-add=SYS_PTRACE \
   --security-opt seccomp=unconfined \
-  onescience-0.3.0:pytorch2.5.1-ubuntu22.04-dtk25.04.2-py3.10 \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/hygon-science-weather:latest \
   /bin/bash
 ```
 
@@ -223,7 +223,7 @@ docker run -it \
   -v $WEATHER_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \
   --group-add video --cap-add=SYS_PTRACE \
   --security-opt seccomp=unconfined \
-  onescience-0.3.0:pytorch2.5.1-ubuntu22.04-dtk25.04.2-py3.10 \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/hygon-science-weather:latest \
   /bin/bash
 ```
 
@@ -242,7 +242,7 @@ docker run -it \
   -v $WEATHER_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \
   --group-add video --cap-add=SYS_PTRACE \
   --security-opt seccomp=unconfined \
-  onescience-0.3.0:pytorch2.5.1-ubuntu22.04-dtk25.04.2-py3.10 \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/hygon-science-weather:latest \
   /bin/bash
 ```
 
