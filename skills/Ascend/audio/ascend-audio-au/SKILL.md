@@ -141,17 +141,27 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/ascend-audio-au:latest
 ### 容器创建命令
 
 ```bash
-docker run -itd \
+docker run -d \
   --name au-eval \
-  --runtime=ascend \
+  --privileged=true \
   --ipc=host \
   --shm-size=128g \
-  -e ASCEND_VISIBLE_DEVICES=0 \
-  -e PYTHONUNBUFFERED=1 \
-  -v /usr/local/dcmi:/usr/local/dcmi:ro \
-  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi:ro \
-  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
-  -v /etc/  ascend_install.info  :/etc/  ascend_install.info  :ro \
+  --device /dev/davinci0 \
+  --device /dev/davinci1 \
+  --device /dev/davinci2 \
+  --device /dev/davinci3 \
+  --device /dev/davinci4 \
+  --device /dev/davinci5 \
+  --device /dev/davinci6 \
+  --device /dev/davinci7 \
+  --device /dev/davinci_manager \
+  --device /dev/devmm_svm \
+  --device /dev/hisi_hdc \
+  -v /usr/local/dcmi:/usr/local/dcmi \
+  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+  -v /usr/local/Ascend/driver/lib64/:/usr/local/Ascend/driver/lib64/ \
+  -v /usr/local/Ascend/driver/version.info:/usr/local/Ascend/driver/version.info \
+  -v /etc/ascend_install.info:/etc/ascend_install.info \
   -v $AU_CONFIG_DIR:/workspace/config:ro \
   -v $AU_MODEL_CKPT_DIR:/workspace/models:rw \
   -v $AU_DATA_DIR:/workspace/datasets:ro \
@@ -164,26 +174,30 @@ docker run -itd \
 
 | 参数 | 说明 |
 |------|------|
-| `--runtime=ascend` | 使用 Ascend Docker 运行时，自动注入 NPU 设备与驱动 |
+| `--privileged=true` | 赋予容器特权模式，访问宿主机 NPU 设备所需 |
 | `--ipc=host` | 使用宿主机 IPC 命名空间，避免共享内存隔离导致 NPU 通信异常 |
 | `--shm-size=128g` | 共享内存大小，避免大吞吐推理时内存不足 |
-| `-e ASCEND_VISIBLE_DEVICES=0` | 指定容器可见的 NPU 卡号（如使用 0 号卡） |
-| `-e PYTHONUNBUFFERED=1` | Python 输出不缓冲，确保日志实时可见 |
+| `--device /dev/davinci0` ~ `davinci7` | 将宿主机 8 张 NPU 卡（0-7）直通到容器，按实际可用卡数增减 |
+| `--device /dev/davinci_manager` | NPU 管理设备，必需 |
+| `--device /dev/devmm_svm` | NPU 共享虚拟内存设备，必需 |
+| `--device /dev/hisi_hdc` | NPU HDC（Host-Device Communication）设备，必需 |
 
 **Ascend 驱动相关挂载说明**：
 - `/usr/local/dcmi` — DCMI（Device Card Management Interface）库，NPU 设备管理接口
 - `/usr/local/bin/npu-smi` — NPU 状态查询工具
-- `/usr/local/Ascend/driver` — Ascend NPU 驱动目录
+- `/usr/local/Ascend/driver/lib64/` — Ascend NPU 驱动动态库目录
+- `/usr/local/Ascend/driver/version.info` — Ascend 驱动版本信息
 - `/etc/ascend_install.info` — Ascend 安装元信息
 
 **挂载权限约定**：
-- `:ro` — 只读，用于输入数据（模型权重、数据集、配置文件、驱动）
-- `:rw` — 读写，用于输出目录（results、logs）
+- `:ro` — 只读，用于输入数据（数据集、配置文件）
+- `:rw` — 读写，用于输出目录（results、logs）以及模型权重目录
+- 未显式标注权限的挂载（如驱动相关目录）默认采用读写模式，与宿主机保持一致
 
 **注意**：
-- 必须以 `-d` 参数运行（分离模式），并指定保持容器运行的命令（如 `tail -f /dev/null`）
+- 必须以 `-d` 参数运行（分离模式），镜像自带常驻入口保持容器运行
 - 若已存在同名容器，先执行 `docker rm -f au-eval`
-- 如使用多卡，可设置 `ASCEND_VISIBLE_DEVICES=0,1,2,3`
+- 如仅使用部分 NPU 卡，可按需删减 `--device /dev/davinciN` 行（如只挂载 `davinci0`）
 
 ### 容器管理命令
 
@@ -380,14 +394,15 @@ except Exception as e:
 1. **Docker 容器启动失败**
    - **容器名已存在**：确认不存在同名容器 `docker rm -f au-eval`
    - **NPU 不可用**：确认宿主机上 `npu-smi info` 正常，Ascend 驱动已安装
-   - **runtime 未注册**：确认已安装 Ascend Docker Runtime，`docker info | grep -i runtime` 中包含 `ascend`
+   - **设备文件缺失**：确认宿主机存在 `/dev/davinci0`~`/dev/davinci7`、`/dev/davinci_manager`、`/dev/devmm_svm`、`/dev/hisi_hdc`；若仅有部分 NPU 卡，按实际数量删减 `--device` 行
+   - **驱动路径不匹配**：确认宿主机 `/usr/local/Ascend/driver/lib64/` 与 `/usr/local/Ascend/driver/version.info` 存在；不同驱动版本目录结构可能略有差异
    - **镜像未拉取**：确认镜像 `swr.cn-north-1.myhuaweicloud.com/deeplink/ascend-audio-au:latest` 已 pull 到本地
    - **共享内存不足**：如遇到内存错误，可增加 `--shm-size` 参数值（如 `256g`）
 
 2. **容器内找不到 NPU 设备**
     - 执行 `npu-smi info` 验证 NPU 可见性
-    - 检查 docker run 时是否包含 `--runtime=ascend` 与 `-e ASCEND_VISIBLE_DEVICES=...`
-    - 检查驱动相关挂载（`/usr/local/dcmi`、`/usr/local/bin/npu-smi`、`/usr/local/Ascend/driver`、`/etc/ascend_install.info`）是否齐全
+    - 检查 docker run 时是否包含 `--privileged=true` 以及 `--device /dev/davinci*`、`--device /dev/davinci_manager`、`--device /dev/devmm_svm`、`--device /dev/hisi_hdc` 等设备直通参数
+    - 检查驱动相关挂载（`/usr/local/dcmi`、`/usr/local/bin/npu-smi`、`/usr/local/Ascend/driver/lib64/`、`/usr/local/Ascend/driver/version.info`、`/etc/ascend_install.info`）是否齐全
 
 3. **测试无法启动**
    - 检查模型路径 `/workspace/models/audio_understanding/lang-id-voxlingua107-ecapa/` 下 `embedding_model.ckpt`、`classifier.ckpt` 等权重文件是否存在
@@ -406,9 +421,9 @@ except Exception as e:
         ```bash
         npu-smi info
         ```
-     step 2. **切换可用的 NPU**：通过 `ASCEND_VISIBLE_DEVICES` 环境变量指定，例如：
+     step 2. **切换可用的 NPU**：通过 `ASCEND_RT_VISIBLE_DEVICES` 环境变量在容器内指定逻辑可见的卡号，例如：
         ```bash
-        export ASCEND_VISIBLE_DEVICES=0  # 使用第0号卡
+        export ASCEND_RT_VISIBLE_DEVICES=0  # 仅使用第 0 号卡
         ```
      step 3. **重新执行脚本**
 
