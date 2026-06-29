@@ -136,7 +136,7 @@ docker run -itd \
   --shm-size=128g \
   -e PYTHONUNBUFFERED=1 \
   -v $AU_CONFIG_DIR:/workspace/config:ro \
-  -v $AU_MODEL_CKPT_DIR:/workspace/models:ro \
+  -v $AU_MODEL_CKPT_DIR:/workspace/models:rw \
   -v $AU_DATA_DIR:/workspace/datasets:ro \
   -v $AU_INFERENCE_OUTPUT:/workspace/results/${MODEL_NAME}:rw \
   -v $AU_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \

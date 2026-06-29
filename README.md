@@ -76,10 +76,14 @@ claude-code 使用示例
 | | | 其他芯片 | ⏳ 敬请期待 | |
 | 语音场景 | 语音识别（推理） | NVIDIA | [nvidia-audio-asr](skills/NVIDIA/audio/nvidia-audio-asr/SKILL.md) ✅ | 实现语音识别模型性能评测，包括吞吐量、字符错误率、词错误率等。 |
 | | | Ascend | [ascend-audio-asr](skills/Ascend/audio/ascend-audio-asr/SKILL.md) ✅ | 支持SenseVoice等语音识别模型的推理和评测 |
+| | | Hygon | [hygon-audio-asr](skills/Hygon/audio/hygon-audio-asr/SKILL.md) ✅ | 支持SenseVoice等语音识别模型的推理和评测 |
+| | | PPU | [ppu-audio-asr](skills/PPU/audio/ppu-audio-asr/SKILL.md) ✅ | 支持SenseVoice等语音识别模型的推理和评测 |
 | | 语音生成（推理） | NVIDIA | ⏳ 敬请期待 | 计划实现语音生成模型推理性能评测，包括文本到语音合成速度、语音质量等关键指标。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
 | | 音频理解（推理） | NVIDIA | [nvidia-audio-au](skills/NVIDIA/audio/nvidia-audio-au/SKILL.md) ✅ | 计划实现音频理解任务性能评测，包括音频分类、声纹识别等。 |
 | | | Ascend | [ascend-audio-au](skills/Ascend/audio/ascend-audio-au/SKILL.md) ✅ | 支持lang-id-voxlingua107-ecapa等音频理解模型的推理和评测 |
+| | | Hygon | [hygon-audio-au](skills/Hygon/audio/hygon-audio-au/SKILL.md) ✅ | 支持lang-id-voxlingua107-ecapa等音频理解模型的推理和评测 |
+| | | PPU | [ppu-audio-au](skills/PPU/audio/ppu-audio-au/SKILL.md) ✅ | 支持lang-id-voxlingua107-ecapa等音频理解模型的推理和评测 |
 | | 音频生成（推理） | NVIDIA | ⏳ 敬请期待 | 计划实现音频生成模型推理性能评测，包括音乐生成、音效合成等。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
 

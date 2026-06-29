@@ -1,16 +1,16 @@
 ---
-name: ppu-audio-asr
-description: PPU 上语音识别模型推理性能评测技能。支持 SenseVoice 多语言语音识别模型，用于指导 executor 完成容器启动、数据集准备、推理执行、日志采集与性能指标分析（CER/WER）。
+name: ppu-audio-au
+description: PPU 上语音理解模型推理性能评测技能。支持 lang-id-voxlingua107-ecapa 语种识别模型，用于指导 executor 完成容器启动、数据集准备、推理执行、日志采集与性能指标分析（ACC）。
 ---
 
 ### 触发条件
 
 当用户说以下任意内容时启动：
-- "我要在 PPU 上跑 ASR 模型测试"
-- "帮我测试 SenseVoice 多语言语音理解模型推理性能"
-- "在 PPU 上跑 中文语音识别 Aishell-1 学术数据集测试集"
-- "帮我批量测试语音识别模型 FP32/FP16 性能"
-- "采集 ASR 模型 CER (字符错误率)"
+- "我要在 PPU 上跑 AU 模型测试"
+- "帮我测试 lang-id-voxlingua107-ecapa 语种识别模型推理性能"
+- "在 PPU 上跑语音理解 foundation-lid 数据集测试集"
+- "帮我批量测试语音理解模型 FP32/FP16 性能"
+- "采集 AU 模型 ACC (准确率)"
 
 ---
 
@@ -19,58 +19,52 @@ description: PPU 上语音识别模型推理性能评测技能。支持 SenseVoi
 
 | 环境变量 | 映射目录 | 是否必需 | 说明 |
 |---------|----------|----------|------|
-| `ASR_PROJECT_ROOT` | `/workspace` | 否 | 项目根目录，需外部提供，模型文件所在目录 |
-| `ASR_MODEL_CKPT_DIR` | `/workspace/models` | 是 | 模型检查点目录，存放speech_recognition场景下的模型权重文件 |
-| `ASR_DATA_DIR` | `/workspace/datasets` | 是 | 包含speech_recognition场景下的数据集，具体包含Aishell-1 等数据集目录，存放 lmdb 格式数据 |
-| `ASR_CONFIG_DIR` | `/workspace/config` | 是 | 配置文件目录，包含 data_set.cfg |
-| `ASR_INFERENCE_OUTPUT` | `/workspace/results/${MODEL_NAME}` | 否 | 推理结果输出目录 |
-| `ASR_LOGS_DIR` | `/workspace/logs/${MODEL_NAME}` | 否 | 日志输出目录 |
+| `AU_PROJECT_ROOT` | `/workspace` | 否 | 项目根目录，需外部提供，模型文件所在目录 |
+| `AU_MODEL_CKPT_DIR` | `/workspace/models` | 是 | 模型检查点目录，存放 audio_understanding 场景下的模型权重文件 |
+| `AU_DATA_DIR` | `/workspace/datasets` | 是 | 包含 audio_understanding 场景下的数据集，具体包含 foundation-lid 等数据集目录，存放 lmdb 格式数据 |
+| `AU_CONFIG_DIR` | `/workspace/config` | 是 | 配置文件目录，包含 data_set.cfg |
+| `AU_INFERENCE_OUTPUT` | `/workspace/results/${MODEL_NAME}` | 否 | 推理结果输出目录 |
+| `AU_LOGS_DIR` | `/workspace/logs/${MODEL_NAME}` | 否 | 日志输出目录 |
 
 **说明**：
-- **ASR_PROJECT_ROOT** 不需要外部提供，镜像中已包含所有推理代码和相关工具
-- **ASR_MODEL_CKPT_DIR** 需要外部提供，存放 SenseVoiceSmall 模型权重文件
-- **ASR_DATA_DIR** 需要外部提供，存放预处理后的数据集，包含speech_recognition场景下的数据集
-- **ASR_CONFIG_DIR** 需要外部提供，存放 data_set.cfg 数据集路径配置文件
+- **AU_PROJECT_ROOT** 不需要外部提供，镜像中已包含所有推理代码和相关工具
+- **AU_MODEL_CKPT_DIR** 需要外部提供，存放 lang-id-voxlingua107-ecapa 模型权重文件
+- **AU_DATA_DIR** 需要外部提供，存放预处理后的数据集，包含 audio_understanding 场景下的数据集
+- **AU_CONFIG_DIR** 需要外部提供，存放 data_set.cfg 数据集路径配置文件
 - 其他环境变量可根据需要自定义提供
 
 **目录结构说明**：
 
-- `$ASR_PROJECT_ROOT`: 项目根目录（`/workspace`），默认结构如下：
+- `$AU_PROJECT_ROOT`: 项目根目录（`/workspace`），默认结构如下：
   ```
-  $ASR_PROJECT_ROOT/                        # = /workspace
+  $AU_PROJECT_ROOT/                         # = /workspace
   ├── infer_runner.py                       # 推理主程序入口
   ├── inference.py                          # 推理核心逻辑
   ├── model_loader.py                       # 模型加载器
   ├── requirements.txt                      # Python 依赖清单
   ├── entrypoint.sh                         # 容器入口脚本
   ├── README.md                             # 项目说明文档
-  ├── config/                               # = ASR_CONFIG_DIR
+  ├── config/                               # = AU_CONFIG_DIR
   │   ├── data_set.cfg                      # 数据集路径配置文件
   │   ├── global_env_state.json             # 全局环境状态
   │   ├── prometheus.yml                    # Prometheus 监控配置
   │   └── ...
   ├── models/
-  │   └── speech_recognition/               # = ASR_MODEL_CKPT_DIR
-  │       └── SenseVoiceSmall/              # ${MODEL_NAME}
+  │   └── audio_understanding/              # = AU_MODEL_CKPT_DIR
+  │       └── lang-id-voxlingua107-ecapa/   # ${MODEL_NAME}
   │           ├── README.md                 # 模型说明文档
-  │           ├── model.pt                  # 模型权重文件
-  │           ├── config.yaml               # 模型结构配置，定义编码器/解码器参数
-  │           ├── configuration.json        # 模型推理配置 (JSON格式)
-  │           ├── am.mvn                    # 声学模型均值方差归一化参数
-  │           ├── tokens.json               # 词表文件，token ID 到文本的映射
-  │           ├── chn_jpn_yue_eng_ko_spectok.bpe.model  # 多语言BPE分词模型 (中/日/粤/英/韩)
-  │           ├── example/                  # 示例音频文件
-  │           └── fig/                      # 模型架构示意图
-  ├── datasets/                             # = ASR_DATA_DIR
-  │   └── speech_recognition/               # 语音识别，总共 28 个数据集
-  │       ├── aishell1/                     # Aishell-1 中文语音识别数据集
+  │           ├── embedding_model.ckpt      # ECAPA-TDNN 嵌入模型权重
+  │           ├── classifier.ckpt           # 语种分类器权重
+  │           ├── label_encoder.txt         # 语种标签编码器（107 种语言）
+  │           ├── normalizer.ckpt           # 特征归一化参数
+  │           ├── hyperparams.yaml          # 模型超参数与推理配置
+  │           └── example/                  # 示例音频文件
+  ├── datasets/                             # = AU_DATA_DIR
+  │   └── audio_understanding/              # 语音理解场景数据集
+  │       ├── foundation-lid/               # 语种识别基础数据集
   │       │   ├── data_0.lmdb               # LMDB 格式数据分片 0
   │       │   ├── data_1.lmdb               # LMDB 格式数据分片 1
   │       │   └── meta.json                 # 数据集元信息
-  │       ├── librispeech-test-clean/        # LibriSpeech test-clean 英文语音识别数据集
-  │       ├── librispeech-test-other/        # LibriSpeech test-other 英文语音识别数据集
-  │       ├── fleurs-cmn/                   # FLEURS 中文（普通话）语音识别数据集
-  │       ├── fleurs-en/                    # FLEURS 英文语音识别数据集
   │       └── ...
   ├── src/                                  # 评测框架源码
   ├── eval/                                 # 评测启动脚本
@@ -82,15 +76,16 @@ description: PPU 上语音识别模型推理性能评测技能。支持 SenseVoi
   ```
 
 **关键文件说明**：
-- `model.pt`: 模型权重文件，推理的核心文件
-- `config.yaml`: 模型结构配置，定义编码器/解码器参数
-- `chn_jpn_yue_eng_ko_spectok.bpe.model`: 多语言 BPE 分词模型，支持中/日/粤/英/韩五语
-- `tokens.json`: 词表映射文件
+- `embedding_model.ckpt`: ECAPA-TDNN 语音嵌入模型权重，将语音转换为说话人/语种向量
+- `classifier.ckpt`: 语种分类器权重，基于嵌入向量预测语种类别
+- `label_encoder.txt`: 语种标签编码器，定义 107 种语言的索引映射
+- `normalizer.ckpt`: 输入特征归一化参数
+- `hyperparams.yaml`: 模型超参数与推理流水线配置
 - `data_set.cfg`：数据集配置文件，指定各数据集 lmdb 路径
 - 每个数据集目录下包含 `data_*.lmdb`（LMDB 数据分片）和 `meta.json`（元信息）
 
 **注意**：
-- 必需的参数（如 `ASR_MODEL_CKPT_DIR`、`ASR_DATA_DIR`、`ASR_CONFIG_DIR`）必须提供
+- 必需的参数（如 `AU_MODEL_CKPT_DIR`、`AU_DATA_DIR`、`AU_CONFIG_DIR`）必须提供
 - 表格中的"映射目录"列指明了容器启动时 `-v` 参数的挂载路径，即宿主机路径映射到容器内的路径
 
 ---
@@ -98,20 +93,20 @@ description: PPU 上语音识别模型推理性能评测技能。支持 SenseVoi
 ### 支持的模型配置
 
 **当前支持模型**（共 1 个）：
-- `SenseVoiceSmall`: 阿里达摩院发布的多语言语音识别模型，支持中/日/粤/英/韩五种语言的语音识别能力
+- `lang-id-voxlingua107-ecapa`: 基于 ECAPA-TDNN 架构、在 VoxLingua107 数据集上训练的语种识别（Language Identification, LID）模型，支持 107 种语言识别
 
 **当前支持任务**：
-- 基于语音识别数据集的语音识别模型推理与性能测试
-- 性能评估：CER（字符错误率）、WER（词错误率）
+- 基于语种识别数据集的语音理解模型推理与性能测试
+- 性能评估：ACC（准确率）
 - 吞吐性能：`avg_inference_time`（平均推理时间/样本）
 
 **当前支持的数据集**：
-语音识别任务总共支持 28 个数据集
-aishell1、fleurs-ar、fleurs-cmn、fleurs-de、fleurs-en、fleurs-es、fleurs-fr、fleurs-hi、fleurs-it、fleurs-ja、fleurs-ko、fleurs-pt、fleurs-ru、fleurs-th、fleurs-vi、fleurs-yue、kespeech-beijing、kespeech-ji-lu、kespeech-jiang-huai、kespeech-jiao-liao、kespeech-lan-yin、kespeech-mandarin、kespeech-northeastern、kespeech-southwestern、kespeech-zhongyuan、librispeech-test-clean、librispeech-test-other、speech_asr_aishell1_testsets
+语音理解任务支持以下数据集：
+- foundation-lid：语种识别基础测试集，覆盖 VoxLingua107 多语种样本
 
 **硬件要求**：
 - 1 张 PPU 加速卡
-- 足够显存支撑 ASR 模型推理
+- 足够显存支撑 AU 模型推理
 
 ---
 
@@ -119,7 +114,7 @@ aishell1、fleurs-ar、fleurs-cmn、fleurs-de、fleurs-en、fleurs-es、fleurs-f
 
 **容器镜像**：
 ```bash
-swr.cn-north-1.myhuaweicloud.com/deeplink/ppu-audio-asr:latest
+swr.cn-north-1.myhuaweicloud.com/deeplink/ppu-audio-au:latest
 ```
 
 容器内已预装：
@@ -127,7 +122,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/ppu-audio-asr:latest
 - PyTorch（适配 PPU 版本）
 - PPU 运行时与工具链
 - 模型推理运行器 `infer_runner.py`（位于 `/workspace/`）
-- 相关 Python 依赖库
+- 相关 Python 依赖库（SpeechBrain、torchaudio 等）
 
 **宿主机依赖**：
 - `/dev/alixpu*`：PPU 设备文件（必需，需通过 `--device` 挂载至容器内）
@@ -142,15 +137,15 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/ppu-audio-asr:latest
 docker run -itd \
   --privileged=true \
   --ipc=host \
-  --name asr-eval \
+  --name au-eval \
   $(for i in /dev/alixpu*; do [ -e "$i" ] && printf -- "--device=%s " "$i"; done) \
   -e PYTHONUNBUFFERED=1 \
-  -v $ASR_CONFIG_DIR:/workspace/config:ro \
-  -v $ASR_MODEL_CKPT_DIR:/workspace/models:ro \
-  -v $ASR_DATA_DIR:/workspace/datasets:ro \
-  -v $ASR_INFERENCE_OUTPUT:/workspace/results/${MODEL_NAME}:rw \
-  -v $ASR_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \
-  swr.cn-north-1.myhuaweicloud.com/deeplink/ppu-audio-asr:latest
+  -v $AU_CONFIG_DIR:/workspace/config:ro \
+  -v $AU_MODEL_CKPT_DIR:/workspace/models:rw \
+  -v $AU_DATA_DIR:/workspace/datasets:ro \
+  -v $AU_INFERENCE_OUTPUT:/workspace/results/${MODEL_NAME}:rw \
+  -v $AU_LOGS_DIR:/workspace/logs/${MODEL_NAME}:rw \
+  swr.cn-north-1.myhuaweicloud.com/deeplink/ppu-audio-au:latest
 ```
 
 **公共参数说明**：
@@ -168,19 +163,19 @@ docker run -itd \
 
 **注意**：
 - 必须以 `-itd` 参数运行（交互式分离模式），保持容器后台运行
-- 若已存在同名容器，先执行 `docker rm -f asr-eval`
-- `${MODEL_NAME}` 在宿主机已通过 `export MODEL_NAME=SenseVoiceSmall` 设置
+- 若已存在同名容器，先执行 `docker rm -f au-eval`
+- `${MODEL_NAME}` 在宿主机已通过 `export MODEL_NAME=lang-id-voxlingua107-ecapa` 设置
 
 ### 容器管理命令
 
 **进入已创建的容器**：
 ```bash
 # 如果容器在运行
-docker exec -it asr-eval /bin/bash
+docker exec -it au-eval /bin/bash
 
 # 如果容器已停止，先启动再进入
-docker start asr-eval
-docker exec -it asr-eval /bin/bash
+docker start au-eval
+docker exec -it au-eval /bin/bash
 ```
 
 **验证容器环境**：
@@ -189,7 +184,7 @@ docker exec -it asr-eval /bin/bash
 ls -lh /dev/alixpu*
 
 # 检查挂载的模型权重
-ls -lh /workspace/models/speech_recognition/SenseVoiceSmall/model.pt
+ls -lh /workspace/models/audio_understanding/lang-id-voxlingua107-ecapa/
 
 # 检查数据集
 ls -lh /workspace/datasets
@@ -208,18 +203,18 @@ cat /workspace/config/data_set.cfg
 
 ```bash
 # 选择要测试的模型
-MODEL_NAME="SenseVoiceSmall"  # 可选: SenseVoiceSmall
-DATASET_NAME="kespeech-beijing" # 可选：aishell1、kespeech-beijing等
+MODEL_NAME="lang-id-voxlingua107-ecapa"  # 可选: lang-id-voxlingua107-ecapa
+DATASET_NAME="foundation-lid"            # 可选：foundation-lid
 cd /workspace
 ```
 
 ### 配置文件说明
 **配置文件关键路径**（`/workspace/config/data_set.cfg`）：
 ```
-# SenseVoiceSmall 数据集配置（容器内路径）
-datasets_base: "/workspace/datasets"
+# lang-id-voxlingua107-ecapa 数据集配置（容器内路径）
+datasets_base: "/workspace/datasets/audio_understanding"
 datasets:
-  - kespeech-beijing
+  - foundation-lid
 ```
 
 ### 步骤 2：执行推理评测
@@ -230,7 +225,7 @@ datasets:
 cd /workspace
 mkdir -p /workspace/logs/${MODEL_NAME}
 python3 -u /workspace/infer_runner.py \
-  --model_dir /workspace/models/speech_recognition/${MODEL_NAME} \
+  --model_dir /workspace/models/audio_understanding/${MODEL_NAME} \
   --output_dir /workspace/results/${MODEL_NAME}/predictions/ \
   --acc_report /workspace/results/${MODEL_NAME}/acc_report.json \
   --data_set /workspace/config/data_set.cfg \
@@ -240,7 +235,7 @@ python3 -u /workspace/infer_runner.py \
 上述指令的默认行为：
 - 创建 `/workspace/logs/${MODEL_NAME}` 目录
 - 启动 `/workspace/infer_runner.py` 进行推理
-- 指定模型路径：`--model_dir /workspace/models/speech_recognition/${MODEL_NAME}`
+- 指定模型路径：`--model_dir /workspace/models/audio_understanding/${MODEL_NAME}`
 - 指定结果输出路径：`--output_dir /workspace/results/${MODEL_NAME}/predictions/`
 - 指定准确率报告输出路径：`--acc_report /workspace/results/${MODEL_NAME}/acc_report.json`
 - 指定数据集配置文件：`--data_set /workspace/config/data_set.cfg`
@@ -260,9 +255,9 @@ cat /workspace/results/${MODEL_NAME}/acc_report.json
 
 在每个数据集测评结束，日志会打印测评结果、指标和测试速度（单位：样本/秒），例如：
 ```text
-结果: 265/265 成功
-指标: {'cer': 0.10670493086355336, 'total_edits': 409, 'total_ref_len': 3833, 'substitutions': 347, 'deletions': 15, 'insertions': 47, 'num_samples': 265}
-耗时: 23.4s
+结果: 1000/1000 成功
+指标: {'acc': 0.932, 'correct': 932, 'num_samples': 1000}
+耗时: 85.6s
 ```
 
 测试日志末尾会输出所有数据集结果汇总：
@@ -272,10 +267,10 @@ cat /workspace/results/${MODEL_NAME}/acc_report.json
 评测完成!
 ============================================================
 评测数据集数: 1
-  kespeech-beijing: {'cer': 0.10670493086355336, 'total_edits': 409, 'total_ref_len': 3833, 'substitutions': 347, 'deletions': 15, 'insertions': 47, 'num_samples': 265}, 样本数=265
+  foundation-lid: {'acc': 0.932, 'correct': 932, 'num_samples': 1000}, 样本数=1000
 
-acc_report: /workspace/results/SenseVoiceSmall/acc_report.json
-predictions: /workspace/results/SenseVoiceSmall/predictions/
+acc_report: /workspace/results/lang-id-voxlingua107-ecapa/acc_report.json
+predictions: /workspace/results/lang-id-voxlingua107-ecapa/predictions/
 ```
 
 其中，`acc_report` 记录了每个数据集的详细性能数据：
@@ -284,30 +279,26 @@ predictions: /workspace/results/SenseVoiceSmall/predictions/
 {
   "records": [
     {
-      "dataset": "kespeech-beijing",
-      "model": "SenseVoiceSmall",
-      "model_type": "recognition",
+      "dataset": "foundation-lid",
+      "model": "lang-id-voxlingua107-ecapa",
+      "model_type": "understanding",
       "chip": "ppu",
       "device": "ppu (PPU)",
-      "total_samples": 265,
-      "success_samples": 265,
+      "total_samples": 1000,
+      "success_samples": 1000,
       "error_samples": 0,
       "success_rate": 1.0,
-      "total_time": 23.38645100593567,
-      "avg_inference_time": 0.08438867924528304,
+      "total_time": 40.71252655982971,
+      "avg_inference_time": 0.028825199127197266,
       "metrics": {
-        "cer": 0.10670493086355336,
-        "total_edits": 409,
-        "total_ref_len": 3833,
-        "substitutions": 347,
-        "deletions": 15,
-        "insertions": 47,
-        "num_samples": 265
+        "accuracy": 0.653,
+        "correct": 653,
+        "total": 1000
       },
-      "timestamp": "20260602_030457"
+      "timestamp": "20260612_030847"
     }
   ],
-  "last_updated": "20260602_030457",
+  "last_updated": "20260612_030847",
   "notes": ""
 }
 ```
@@ -316,13 +307,12 @@ predictions: /workspace/results/SenseVoiceSmall/predictions/
 
 | 类型 | 指标 | 说明 |
 |------|------|------|
-| 准确率（必采） | CER | 字符错误率，数值越低越好（中文数据集） |
-| 准确率（必采） | WER | 词错误率，数值越低越好（英文数据集） |
+| 准确率（必采） | ACC | 语种识别准确率，数值越高越好 |
 | 性能（必采） | `avg_inference_time` | 平均每条样本推理时间，核心吞吐指标 |
 | 准确率（辅助） | `success_rate` | 推理成功率 |
 | 总样本数（辅助） | `total_samples` | 总共测试的样本数量 |
 
-**注意**：中文数据集仅有 CER 指标；英文数据集仅有 WER 指标
+**注意**：语种识别任务（LID）以 ACC（准确率）作为唯一精度指标
 
 #### 指标采集
 
@@ -348,8 +338,7 @@ try:
                 'avg_inference_time': record.get('avg_inference_time', 0),
                 'success_rate': record.get('success_rate', 0),
                 'total_samples': record.get('total_samples', 0),
-                'cer': metrics.get('cer'),
-                'wer': metrics.get('wer'),
+                'acc': metrics.get('accuracy'),
             }
         )
 
@@ -371,9 +360,9 @@ except Exception as e:
 ## 常见问题
 
 1. **容器启动失败**
-   - **容器名已存在**：确认不存在同名容器 `docker rm -f asr-eval`
+   - **容器名已存在**：确认不存在同名容器 `docker rm -f au-eval`
    - **设备文件不存在**：确认宿主机上有 `/dev/alixpu*` 设备文件（`ls /dev/alixpu*`）
-   - **镜像未拉取**：确认镜像 `swr.cn-north-1.myhuaweicloud.com/deeplink/ppu-audio-asr:latest` 已 pull 到本地
+   - **镜像未拉取**：确认镜像 `swr.cn-north-1.myhuaweicloud.com/deeplink/ppu-audio-au:latest` 已 pull 到本地
    - **特权权限不足**：确保 `--privileged=true` 参数已设置
 
 2. **容器内找不到 PPU 设备**
@@ -383,7 +372,7 @@ except Exception as e:
     - 检查 `--privileged=true` 与 `--ipc=host` 是否生效
 
 3. **测试无法启动**
-   - 检查模型路径 `/workspace/models/speech_recognition/SenseVoiceSmall/` 下 `model.pt` 权重文件是否存在
+   - 检查模型路径 `/workspace/models/audio_understanding/lang-id-voxlingua107-ecapa/` 下 `embedding_model.ckpt`、`classifier.ckpt` 等权重文件是否存在
    - 检查数据集路径 `/workspace/datasets` 挂载是否正确
    - 检查配置文件 `/workspace/config/data_set.cfg` 是否存在且路径正确
 
