@@ -141,7 +141,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/ascend-audio-au:latest
 ### 容器创建命令
 
 ```bash
-docker run -d \
+docker run -itd \
   --name au-eval \
   --privileged=true \
   --ipc=host \

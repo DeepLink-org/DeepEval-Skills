@@ -146,7 +146,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/ascend-audio-asr:latest
 ### 容器创建命令
 
 ```bash
-docker run -d \
+docker run -itd \
   --name asr-eval \
   --privileged=true \
   --ipc=host \
