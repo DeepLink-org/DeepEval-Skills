@@ -453,27 +453,48 @@ python result.py 2>&1 | tee /workspace/logs/${MODEL_NAME}_eval.log
 
 #### 指标采集
 
-**方法 1：从 .npy 文件读取（推荐）**
+必须使用以下脚本统一采集指标并输出到 `result.json`，**禁止**通过 grep / 日志解析等不可靠方式提取指标：
 
 ```
+cd /workspace/model/${MODEL_NAME}
 python -c "
-import numpy as np
-rmse = np.load('/workspace/model/${MODEL_NAME}/result/rmse.npy')
-acc = np.load('/workspace/model/${MODEL_NAME}/result/acc.npy')
-print(f'Average RMSE: {rmse.mean():.4f}')
-print(f'Average ACC: {acc.mean():.4f}')
-print(f'Per-channel RMSE: {rmse}')
-print(f'Per-channel ACC: {acc}')
+import numpy as np, json, sys, os
+
+rmse = np.load('result/rmse.npy')
+acc = np.load('result/acc.npy')
+
+metrics = {
+    'average_rmse': float(np.mean(rmse)),
+    'average_acc': float(np.mean(acc)),
+    'per_channel_rmse': rmse.tolist(),
+    'per_channel_acc': acc.tolist()
+}
+
+result = {
+    'status': 'success',
+    'model_name': os.environ.get('MODEL_NAME', 'unknown'),
+    'metrics': metrics
+}
+
+with open('result.json', 'w') as f:
+    json.dump(result, f, indent=2)
+
+print(f'Average RMSE: {metrics[\"average_rmse\"]:.6f}')
+print(f'Average ACC:  {metrics[\"average_acc\"]:.6f}')
+print('Metrics saved to result.json')
 "
+if [ $? -ne 0 ]; then
+    echo "ERROR: Metrics collection failed!" >&2
+    exit 1
+fi
+
+echo "===== Metrics collection completed ====="
 ```
 
-**方法 2：从控制台输出提取**
-
-```
-grep "Average" /workspace/logs/${MODEL_NAME}_eval.log | tail -1
-```
-
-注意：`grep -oP` 需要 GNU grep，在非 GNU 环境下建议直接使用方法 1。
+**约束规则**：
+- **必须**从 `.npy` 文件加载指标，**禁止**从控制台日志 grep/awk 提取
+- **必须**输出到 `result.json`，格式固定为 `{status, model_name, metrics}`
+- **必须**校验脚本退出码，失败时 `exit 1` 阻断后续流程
 
 
 #### 自定义可视化（可选）
