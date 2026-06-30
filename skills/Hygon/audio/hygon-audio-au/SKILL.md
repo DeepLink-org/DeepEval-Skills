@@ -135,7 +135,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/hygon-audio-au:latest
 ### 容器创建命令
 
 ```bash
-docker run -d \
+docker run -itd \
     --name au-eval \
     --network=host \
     --ipc=host \
