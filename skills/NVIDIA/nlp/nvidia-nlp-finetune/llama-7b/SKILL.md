@@ -1,9 +1,10 @@
 ---
-name: nvidia-nlp-finetune
+name: nvidia-nlp-finetune-llama-7b
 description: NVIDIA GPU 上语言模型微调任务的评测技能。用于指导 executor 完成容器启动、微调脚本执行、训练日志采集与性能/质量指标分析。
+test_case: llama-7B
 ---
 
-# nvidia-nlp-finetune
+# nvidia-nlp-finetune: llama-7B
 
 ## 触发条件
 
@@ -96,7 +97,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-finetune:latest
   └── result.json   # 指标采集脚本生成的结构化结果（{"status": "success", "metrics": {...}}）
   ```
 
-  **注意**：内容由步骤 3 的指标采集脚本写入；上层 mcp__agent 会从该路径（容器内 `/workspace/results/result.json`）读取或从脚本 stdout 解析 metrics。
+  **注意**：内容由步骤 3 的指标采集脚本写入；上层 agent 会从该路径（容器内 `/workspace/results/result.json`）读取或从脚本 stdout 解析 metrics。
 
 - `$LOGS_DIR`: 日志目录，典型结构如下：
   ```
