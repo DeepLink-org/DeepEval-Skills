@@ -1,7 +1,8 @@
 ---
 name: nvidia-nlp-inference
 description: NVIDIA GPU 上基于 sglang 的 DeepSeek 文本推理评测技能。用于指导 executor 完成容器启动、模型服务启动、压测脚本执行、推理日志采集与吞吐/延迟指标分析。
-multi_host_hint: references/multi_host.md
+metadata:
+  multi_host_hint: references/multi_host.md
 ---
 
 # nvidia-nlp-inference
@@ -378,7 +379,7 @@ with open(result_path, 'w', encoding='utf-8') as f:
     json.dump(result, f, ensure_ascii=False, indent=2)
 
 # 3) 把 result.json 内容回显到 stdout（必须与文件路径在同一行，
-#    便于上层 mcp__agent 通过 "result.json" 关键字 + {...} 正则提取）
+#    便于上层 agent 通过 "result.json" 关键字 + {...} 正则提取）
 print(f"result.json: {json.dumps(result, ensure_ascii=False)}")
 EOF
 ```
