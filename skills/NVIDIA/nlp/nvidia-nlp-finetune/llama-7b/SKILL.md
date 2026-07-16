@@ -1,6 +1,6 @@
 ---
 name: nvidia-nlp-finetune-llama-7b
-description: NVIDIA GPU 上语言模型微调任务的评测技能。用于指导 executor 完成容器启动、微调脚本执行、训练日志采集与性能/质量指标分析。
+description: NVIDIA GPU 上 Alpaca-LoRA/LLaMA-7B 语言模型微调性能评测技能。基于 alpaca-lora 项目和 scripts/batch_finetune.sh，指导 executor 启动容器、执行微调、采集训练日志，并生成包含 train_tokens_per_second、单卡吞吐、运行时间和 loss 的 result.json。用于 NVIDIA 多卡 LoRA 微调、Alpaca 微调性能测试及 TGS 指标采集。
 test_case: llama-7B
 ---
 
@@ -35,7 +35,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-finetune:latest
 | `MODEL_DIR` | `/data/models/llama-7b-hf` | 是 | 模型权重目录，存放 LLaMA-7B 权重（如 yahma/llama-7b-hf） |
 | `DATASET_DIR` | `/data/datasets/alpaca-cleaned` | 是 | 微调数据集目录，存放 Alpaca-cleaned 指令微调数据 |
 | `CODE_DIR` | `/workspace/code/alpaca_finetune` | 是 | 微调代码目录，包含训练脚本、配置文件与输出子目录 |
-| `RESULTS_DIR` | `/workspace/results` | 是 | 评测结果目录，存放 metrics 汇总文件 `result.json`（由步骤 3 的指标采集脚本生成） |
+| `RESULTS_DIR` | `/workspace/results` | 是 | 评测结果目录，存放 metrics 汇总文件 `result.json` |
 | `LOGS_DIR` | `/workspace/logs` | 是 | 日志目录，存放训练日志（`finetune_<bs>_<mbs>_closeint8.log`）、执行过程输出与内部报错信息 |
 
 **说明**：
@@ -45,6 +45,26 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-finetune:latest
 - **RESULTS_DIR** 需要外部提供，挂载评测结果目录。所有结构化产物（metrics、状态汇总）以 `result.json` 形式写入此目录,供上层 agent 拉取与展示
 - **LOGS_DIR** 需要外部提供，挂载日志目录。训练日志、`stdout`/`stderr` 重定向、容器内异常堆栈等运行期文本均写入此目录，便于事后排查
 - 表格中的"映射目录"列指明了容器启动时 `-v` 参数的挂载路径，即宿主机路径映射到容器内的路径
+
+### 批量脚本变量
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `NLP_FIN_PROJECT_ROOT` | `/workspace/code/alpaca_finetune` | 微调项目根目录 |
+| `NLP_FIN_ALPACA_DIR` | `$NLP_FIN_PROJECT_ROOT/alpaca-lora` | `finetune_int8_close.py` 所在目录 |
+| `NLP_FIN_LOGS_DIR` | `/workspace/logs` | 日志目录 |
+| `NLP_FIN_RESULTS_DIR` | `/workspace/results` | 结构化结果目录 |
+| `NLP_FIN_NGPU` | `${CARD_COUNT:-8}` | `torch.distributed.run --nproc_per_node` 的值，同时用于计算单卡吞吐 |
+| `NLP_FIN_BATCH_SIZE` | `128` | 训练 batch size，也用于日志文件名 |
+| `NLP_FIN_MICRO_BATCH_SIZE` | `4` | 训练 micro batch size，也用于日志文件名 |
+| `NLP_FIN_LOG_FILE` | `$NLP_FIN_LOGS_DIR/finetune_<bs>_<mbs>_closeint8.log` | 训练日志完整路径 |
+| `NLP_FIN_RESULT_FILE` | `$NLP_FIN_RESULTS_DIR/result.json` | 结果文件完整路径 |
+| `PYTHON` | `python3` | 训练用 python 可执行文件，容器 PATH 内需可用 |
+| `MODEL_DIR`（容器内） | `/data/models/llama-7b-hf` | `--base_model` 指向的模型目录（与宿主机挂载变量同名，这里是容器内解析值） |
+| `DATASET_DIR`（容器内） | `/data/datasets/alpaca-cleaned` | `--data_path` 指向的数据集目录 |
+| `OUTPUT_DIR` | `$NLP_FIN_ALPACA_DIR/lora-adapter` | LoRA adapter 输出目录 |
+
+`batch_finetune.sh` 已把 `finetune.sh` 的训练逻辑（`torch.distributed.run finetune_int8_close.py`）合并进来，不再依赖项目自带的 `finetune.sh`。所有训练参数（`--base_model`、`--data_path`、`--num_epochs` 等）由 `batch_finetune.sh` 直接传给 `finetune_int8_close.py`，默认值用上表容器内挂载点。切换 batch size、micro batch size 或日志命名时，设置相应变量或直接设置 `NLP_FIN_LOG_FILE`。
 
 **目录结构说明**：
 
@@ -88,8 +108,12 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-finetune:latest
   ```
 
   **注意**：
-  - `finetune.sh` 在 `$CODE_DIR/alpaca-lora/` 下执行，`--output_dir './lora-adapter'` 与日志重定向 `> "$LOG_FILE"` 均使用相对路径，产物落在该目录内
-  - 主训练脚本中通过 `--base_model` 指向 `$MODEL_DIR/snapshots/<commit_hash>/`，通过 `--data_path` 指向 `$DATASET_DIR`
+  - `finetune.sh`（项目自带的训练启动脚本）**不再需要**——`batch_finetune.sh` 直接调用 `finetune_int8_close.py`，所有路径和参数由 `batch_finetune.sh` 用容器内挂载点默认值提供。
+  - `batch_finetune.sh` 在 `$CODE_DIR/alpaca-lora/` 下执行，`--output_dir './lora-adapter'` 与日志重定向 `> "$LOG_FILE"` 均使用相对路径，产物落在该目录内
+`trainer.py` 和 `trainer_utils.py` 是项目自带的 transformers 补丁版本（见 `$CODE_DIR/README.md`），在训练前由 `batch_finetune.sh` 自动覆盖到容器内 `import transformers` 解析出的 site-packages 目录。不覆盖的话，汇总行没有 `train_tokens_per_second` 字段，解析会失败。使用 HuggingFace Hub 缓存布局时，把 `MODEL_DIR` 指向包含 `snapshots/<commit_hash>/` 的缓存根；扁平布局则直接指向含 `config.json` 的目录。
+
+
+镜像内 `python3` 在 PATH 中（`/opt/conda/bin/python3` 或 `/usr/bin/python3`），`torch.distributed.run` 可用。
 
 - `$RESULTS_DIR`: 评测结果目录，典型结构如下：
   ```
@@ -105,7 +129,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-finetune:latest
   └── finetune_128_4_closeint8.log   # 训练日志（finetune.sh 重定向产物）
   ```
 
-  **注意**：`finetune.sh` 内 `$LOG_FILE` 已直接指向 `$LOGS_DIR/finetune_<bs>_<mbs>_closeint8.log`，训练日志直接落到该路径。步骤 3 中 `log_path = '/workspace/logs/finetune_128_4_closeint8.log'` 即为该文件的容器内路径。
+  **注意**：`batch_finetune.sh` 内 `$LOG_FILE` 已直接指向指定路径，训练日志直接落到该路径。步骤 3 中 `log_path = '/workspace/logs/finetune_128_4_closeint8.log'` 即为该文件的容器内路径。
 
 **注意**：
 - 必需的参数（`MODEL_DIR`、`DATASET_DIR`、`CODE_DIR`、`RESULTS_DIR`、`LOGS_DIR`）必须提供
@@ -169,11 +193,37 @@ ls -lh /workspace/code/alpaca_finetune/alpaca-lora/
 
 ### 步骤 2：执行评测
 
-```bash
-cd /workspace/code/alpaca_finetune/alpaca-lora
+优先使用本 skill 提供的 `scripts/batch_finetune.sh`。如果评测框架将 skill 脚本放在 `/workspace/scripts`，复制脚本后执行：
 
-# 执行微调（finetune.sh 直接在 $LOGS_DIR 下生成 finetune_128_4_closeint8.log）
-bash finetune.sh
+```bash
+if [ ! -f /workspace/code/alpaca_finetune/batch_finetune.sh ] && \
+   [ -f /workspace/scripts/batch_finetune.sh ]; then
+  cp /workspace/scripts/batch_finetune.sh /workspace/code/alpaca_finetune/batch_finetune.sh
+  chmod +x /workspace/code/alpaca_finetune/batch_finetune.sh
+fi
+test -f /workspace/code/alpaca_finetune/batch_finetune.sh
+
+export NLP_FIN_NGPU="${CARD_COUNT:-8}"
+bash /workspace/code/alpaca_finetune/batch_finetune.sh
+```
+
+脚本按顺序完成以下操作：
+
+1. 校验 GPU 数、项目目录和 `finetune_int8_close.py`。
+2. 创建日志、结果、LoRA adapter 输出目录，并记录本次运行时间标记。
+3. 用 `$CODE_DIR/trainer.py` 和 `$CODE_DIR/trainer_utils.py` 覆盖容器内 `transformers` site-packages 里的同名文件（`import transformers` 解析出路径），让 Trainer 汇总行带 `train_tokens_per_second` 等性能字段。
+4. 在 `alpaca-lora/` 中执行 `python -m torch.distributed.run --nproc_per_node=$NLP_FIN_NGPU finetune_int8_close.py`，参数（`--base_model`/`--data_path`/`--output_dir` 等）由脚本用容器内挂载点默认值提供。
+5. 拒绝缺失或未被本次运行更新的日志，避免读取历史结果。
+6. 提取最后一个包含 `train_tokens_per_second` 的训练汇总 dict。
+7. 计算单卡吞吐并写入 `/workspace/results/result.json`。
+8. 以 `result.json: {...}` 格式回显结果，供上层 agent 解析。
+
+若代码目录不可写，直接从预置路径执行脚本，并显式指定项目根目录：
+
+```bash
+export NLP_FIN_PROJECT_ROOT=/workspace/code/alpaca_finetune
+export NLP_FIN_NGPU="${CARD_COUNT:-8}"
+bash /workspace/scripts/batch_finetune.sh
 ```
 
 **输出产物**：
@@ -293,6 +343,9 @@ result.json: {"status": "success", "metrics": {"train_tokens_per_second": 0, "to
 ```json
 {
   "status": "success",
+  "task": "nlp_finetune",
+  "gpu_count": 8,
+  "log": "/workspace/logs/finetune_128_4_closeint8.log",
   "metrics": {
     "train_tokens_per_second": 0,
     "tokens_per_sec_per_gpu": 0,
@@ -304,7 +357,14 @@ result.json: {"status": "success", "metrics": {"train_tokens_per_second": 0, "to
 }
 ```
 
-**注意**：
-- 必须等待训练完成（日志末尾出现含 `train_runtime` 的汇总行）才能采集，否则 grep / 正则会无输出
-- 切换 GPU 数后，需将脚本中的 `nproc` 同步调整为 `finetune.sh` 内 `torchrun --nproc_per_node=` 的实际值
-- 切换 batch size / micro batch size 后，日志文件名会变（格式 `finetune_<bs>_<mbs>_closeint8.log`），需同步更新 `log_path` 路径
+## 常见问题
+
+1. **找不到批量脚本**：确认 `/workspace/scripts/batch_finetune.sh` 已由 skill 资源注入；复制到代码目录或从预置路径直接执行。
+2. **找不到训练入口**：确认 `$CODE_DIR/alpaca-lora/finetune_int8_close.py` 存在，或设置 `NLP_FIN_ALPACA_DIR`。`finetune.sh` 不再需要。
+3. **`TypeError: ... unexpected keyword argument 'evaluation_strategy'`**：新版 transformers 把 `TrainingArguments` 的 `evaluation_strategy` 改名为 `eval_strategy`。在 `finetune_int8_close.py` 里把 `evaluation_strategy=` 改成 `eval_strategy=`。
+4. **`exit code 127` / `No such file or directory: .venv/bin/python`**：`PYTHON` 默认值不可用。确认容器 PATH 里有 `python3`（镜像 `nvidia-nlp-finetune:latest` 有），或显式 `export PYTHON=/opt/conda/bin/python3`。
+5. **没有生成预期日志**：确认 `LOGS_DIR` 可写；切换 batch/micro-batch 时同时设置 `NLP_FIN_LOG_FILE`。
+6. **日志未更新**：脚本只接受本次运行后更新的日志。检查训练是否提前失败（`tail -50 $NLP_FIN_LOG_FILE` 看错误）。
+7. **找不到汇总行**：确认 `$CODE_DIR/trainer.py` 和 `$CODE_DIR/trainer_utils.py` 存在——`batch_finetune.sh` 会把它们覆盖到容器内 `transformers` site-packages，Trainer 汇总行才会有 `train_tokens_per_second`。覆盖失败时看日志里的 `Patched transformers/...` / `WARNING: ... not found` 行。另外训练在 save/load_best_model 阶段崩的话也不会有汇总行——看日志末尾的 traceback。
+8. **单卡吞吐错误**：让 `NLP_FIN_NGPU` 与 `torch.distributed.run --nproc_per_node` 保持一致。
+9. **模型路径错误**：`MODEL_DIR` 默认 `/data/models/llama-7b-hf`，要求该目录下直接有 `config.json`（扁平布局）或 `snapshots/<commit_hash>/config.json`（HF 缓存布局）。若是缓存布局，可显式 `export MODEL_DIR=/data/models/llama-7b-hf/snapshots/<commit_hash>`。
