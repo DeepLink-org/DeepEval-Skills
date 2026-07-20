@@ -1,7 +1,8 @@
 ---
 name: nvidia-nlp-finetune-llama-7b
 description: NVIDIA GPU 上 Alpaca-LoRA/LLaMA-7B 语言模型微调性能评测技能。基于 alpaca-lora 项目和 scripts/batch_finetune.sh，指导 executor 启动容器、执行微调、采集训练日志，并生成包含 train_tokens_per_second、单卡吞吐、运行时间和 loss 的 result.json。用于 NVIDIA 多卡 LoRA 微调、Alpaca 微调性能测试及 TGS 指标采集。
-test_case: llama-7B
+metadata:
+  test_case: llama-7B
 ---
 
 # nvidia-nlp-finetune: llama-7B
