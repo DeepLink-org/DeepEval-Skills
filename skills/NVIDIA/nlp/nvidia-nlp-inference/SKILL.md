@@ -2,6 +2,7 @@
 name: nvidia-nlp-inference
 description: NVIDIA GPU 上基于 sglang 的 DeepSeek 文本推理评测技能。用于指导 executor 完成容器启动、模型服务启动、压测脚本执行、推理日志采集与吞吐/延迟指标分析。
 metadata:
+  test_case: deepseek-R1
   multi_host_hint: references/multi_host.md
 ---
 
