@@ -1,9 +1,16 @@
 ---
-name: nvidia-nlp-training
+name: nvidia-nlp-training-qwen3
 description: NVIDIA GPU 上 Qwen3-8B 模型预训练性能评测技能（基于 NeMo）。用于指导 executor 完成容器启动、数据预处理、预训练脚本执行、训练日志采集与性能指标分析。
+metadata:
+  test_case: qwen3
 ---
 
-# nvidia-nlp-training
+# nvidia-nlp-training: qwen3
+
+本 Skill 的预处理、训练和指标采集分别使用自带的
+`scripts/preprocess.sh`、`scripts/pretrain.sh` 和 `scripts/calc.sh`。Executor 会将它们预置到
+容器内 `/workspace/scripts/`；训练代码仍由 `CODE_DIR` 挂载，评测时不要绕过 Skill 脚本直接调用
+resource 中的 `preprocess_data.sh`、`pretraining_qwen.sh` 或 Python 训练入口。
 
 ## 触发条件
 
@@ -35,7 +42,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-training:latest
 |---------|----------|----------|------|
 | `MODEL_DIR` | `/data/models/qwen3_8b` | 是 | Qwen3-8B 权重目录（HuggingFace 标准模型仓库扁平布局，根目录直接包含 `config.json` / `tokenizer.json` / `model-*.safetensors` 等） |
 | `DATASET_DIR` | `/data/datasets` | 是 | 预训练数据集目录，存放 `arxiv_sample.jsonl`（RedPajama-Data-1T-Sample arxiv 子集） |
-| `CODE_DIR` | `/workspace/code/qwen_pretrain` | 是 | 预训练代码目录，包含 `scripts/` 与 `tools/` 子目录（启动脚本与训练入口 Python） |
+| `CODE_DIR` | `/workspace/code/qwen_pretrain` | 是 | 预训练代码目录，包含 resource 的 `scripts/` 子目录与 `nemotron_pretraining_qwen3_8b.py` 训练入口 |
 | `RESULTS_DIR` | `/workspace/results` | 是 | 评测结果目录，存放 metrics 汇总文件 `result.json`（由步骤 4 的指标采集脚本生成） |
 | `LOGS_DIR` | `/workspace/logs` | 是 | 日志目录，存放预处理日志（`preprocess.log`）、训练日志（`training.log`）以及 `stdout`/`stderr` 重定向输出 |
 
@@ -44,14 +51,13 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-training:latest
 **说明**：
 - **MODEL_DIR** 需要外部提供，挂载预训练模型权重目录（HuggingFace 标准模型仓库扁平布局，根目录直接含 `config.json` / `tokenizer.json` / `model-*.safetensors`）
 - **DATASET_DIR** 需要外部提供，挂载原始数据集目录（包含 `arxiv_sample.jsonl`）
-- **CODE_DIR** 需要外部提供，挂载预训练代码目录。`scripts/preprocess_data.sh` 与 `scripts/pretraining_qwen.sh` 通过相对路径解析 `SKILL_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"`，因此 `tools/` 必须与 `scripts/` 同级
+- **CODE_DIR** 需要外部提供，挂载 resource 的 `code/` 目录。`scripts/preprocess_data.sh` 与 `scripts/pretraining_qwen.sh` 通过相对路径解析代码根目录，因此 `nemotron_pretraining_qwen3_8b.py` 必须与 `scripts/` 同级
 - **RESULTS_DIR** 需要外部提供，挂载评测结果目录。所有结构化产物（metrics、状态汇总）以 `result.json` 形式写入此目录
 - **LOGS_DIR** 需要外部提供，挂载日志目录。预处理 / 训练日志、`stdout`/`stderr` 重定向、容器内异常堆栈等运行期文本均写入此目录，便于事后排查
 - 容器内的 `/workspace/tmp/` 用作预处理产物缓存（`$TMP_DIR/datasets_processed/qwen3_8b/`），**默认不挂载到宿主机**：预处理脚本会在容器启动后 `mkdir -p` 创建该目录，训练入口 Python (`nemotron_pretraining_qwen3_8b.py`) 从同一路径读取；容器销毁后产物丢失，如需跨容器复用，自行挂载即可
 - 表格中的"映射目录"列指明了容器启动时 `-v` 参数的挂载路径，即宿主机路径映射到容器内的路径
 
 **目录结构说明**：
-
 - `$MODEL_DIR`: 模型权重目录，采用 HuggingFace 标准模型仓库扁平布局（与 `git clone https://huggingface.co/Qwen/Qwen3-8B` 后的目录一致），典型结构如下：
   ```
   $MODEL_DIR/                              # 例如 qwen3_8b 或 Qwen3-8B
@@ -81,17 +87,17 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-training:latest
 - `$CODE_DIR`: 预训练代码目录，典型结构如下：
   ```
   $CODE_DIR/                                  # qwen_pretrain
-  ├── scripts/
-  │   ├── preprocess_data.sh                  # 数据预处理启动脚本
-  │   └── pretraining_qwen.sh                 # 预训练启动脚本（torchrun 入口）
-  └── tools/
-      ├── preprocess_data_for_megatron.py     # Megatron 预处理工具
-      └── nemotron_pretraining_qwen3_8b.py    # 训练主入口（基于 NeMo）
+  ├── nemotron_pretraining_qwen3_8b.py        # 训练主入口（基于 NeMo）
+  └── scripts/
+      ├── preprocess_data.sh                  # 数据预处理启动脚本
+      ├── pretraining_qwen.sh                 # 预训练启动脚本
+      └── nlp_language_modeling/
+          └── preprocess_data_for_megatron.py # Megatron 预处理工具
   ```
 
   **注意**：
-  - `scripts/*.sh` 通过 `SKILL_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"` 自动解析 `tools/` 的位置，因此必须保持 `scripts/` 与 `tools/` 同级
-  - `tools/nemotron_pretraining_qwen3_8b.py` 中硬编码了 tokenizer 与预处理产物路径（`/data/models/qwen3_8b`、`/workspace/tmp/datasets_processed/qwen3_8b/`），如调整 `MODEL_DIR`/`TMP_DIR` 的容器内挂载点，需同步修改该 Python 文件
+  - resource 的两个启动脚本均从其所在位置自动解析代码根目录，因此必须保持 `nemotron_pretraining_qwen3_8b.py` 与 `scripts/` 同级
+  - Skill 脚本将 `MODEL_DIR` 与 `TMP_DIR` 传给 resource 代码；如修改容器内挂载点，调用脚本时显式设置相应环境变量
 
 - `$RESULTS_DIR`: 评测结果目录，典型结构如下：
   ```
@@ -178,16 +184,19 @@ nvidia-smi
 ls -lh /data/models/qwen3_8b/
 ls -lh /data/datasets/arxiv_sample.jsonl
 ls -lh /workspace/code/qwen_pretrain/scripts/
-ls -lh /workspace/code/qwen_pretrain/tools/
+ls -lh /workspace/code/qwen_pretrain/nemotron_pretraining_qwen3_8b.py
+
+# 检查 Skill 预置脚本
+test -f /workspace/scripts/preprocess.sh
+test -f /workspace/scripts/pretrain.sh
+test -f /workspace/scripts/calc.sh
 ```
 
 ### 步骤 2：数据预处理
 
 ```bash
-cd /workspace/code/qwen_pretrain
-
-# 执行预处理（产物写入 /workspace/tmp/datasets_processed/qwen3_8b/）
-bash scripts/preprocess_data.sh 2>&1 | tee /workspace/logs/preprocess.log
+# 调用 resource 中的 scripts/preprocess_data.sh；日志由 Skill 脚本写入。
+bash /workspace/scripts/preprocess.sh
 ```
 
 **输出产物**：
@@ -206,35 +215,34 @@ tail -20 /workspace/logs/preprocess.log
 **注意**：
 - 脚本会自动校验 `/data/datasets/arxiv_sample.jsonl` 与 `/data/models/qwen3_8b/` 是否存在
 - 若 `/workspace/tmp/datasets_processed/qwen3_8b/arxiv_sample_text_document.bin` 已存在，可跳过本步骤直接执行步骤 3
-- 如调整 `MODEL_DIR` 的容器内路径，需同步修改 `scripts/preprocess_data.sh` 中的 `MODEL_PATH`
+- 如调整模型、数据或临时目录的容器内路径，调用 `preprocess.sh` 时显式设置 `MODEL_DIR`、`DATASET_DIR` 或 `TMP_DIR`
 
 ### 步骤 3：执行训练
 
 ```bash
-cd /workspace/code/qwen_pretrain
-
-# 执行预训练（默认 1 节点 8 卡，global_batch_size=128，seq_length=8192）
-bash scripts/pretraining_qwen.sh 2>&1 | tee /workspace/logs/training.log
+# 调用 resource 中的 scripts/pretraining_qwen.sh；仅支持单机 8 卡。
+NODE_COUNT=1 PROC_PER_NODE=8 bash /workspace/scripts/pretrain.sh
 ```
 
 **默认行为**：
-- 通过环境变量 `MASTER_PORT`、`GPUS_PER_NODE`、`NNODES`、`NODE_RANK`、`MASTER_ADDR` 配置分布式参数（未设置时自带默认值）
-- 训练入口 `tools/nemotron_pretraining_qwen3_8b.py` 中固定 `global_batch_size=128`、`micro_batch_size=2`、`seq_length=8192`、`max_steps=100`、`warmup_steps=10`
+- `pretrain.sh` 校验 `NODE_COUNT=1`、`PROC_PER_NODE=8`，并向 resource 脚本设置 `MASTER_PORT`、`GPUS_PER_NODE`、`NNODES`、`NODE_RANK`、`MASTER_ADDR`
+- 训练入口 `nemotron_pretraining_qwen3_8b.py` 中固定 `global_batch_size=128`、`micro_batch_size=2`、`seq_length=8192`、`max_steps=100`、`warmup_steps=10`
 - **不要修改** `global_batch_size`、`seq_length` 等核心超参，否则与基线指标不可比
 
 **输出产物**：
 
 | 文件 / 目录 | 容器内路径 | 描述 |
 | :--- | :--- | :--- |
-| `training.log` | `/workspace/logs/training.log` | 训练日志（指标采集源） |
+| `train_Qwen3_8B_8_node0_<timestamp>.log` | `/workspace/logs/` | 训练日志（指标采集源） |
+| `train_Qwen3_8B_node0.path` | `/workspace/logs/train_Qwen3_8B_node0.path` | 本次实际训练日志的完整路径 |
 
 **验证训练结果**：
 ```bash
-# 查看训练日志末尾
-tail -50 /workspace/logs/training.log
+TRAIN_LOG="$(cat /workspace/logs/train_Qwen3_8B_node0.path)"
+test -s "$TRAIN_LOG"
 
 # 检查是否包含 tokens_per_sec_per_gpu 行
-grep -c "tokens_per_sec_per_gpu" /workspace/logs/training.log
+grep -c "tokens_per_sec_per_gpu" "$TRAIN_LOG"
 ```
 
 ### 步骤 4：指标采集
@@ -259,68 +267,21 @@ tokens_per_sec_per_gpu: 0
 
 #### 指标采集方法
 
-**Python 脚本提取**
+**Skill 脚本提取**
 
-脚本职责：
-1. 从训练日志中提取所有 `tokens_per_sec_per_gpu` 行
-2. 丢弃前 10 步与末尾 10 步，对剩余取算术平均
-3. 计算总吞吐 = 单卡均值 × `world_size`（默认 8）
-4. 把 metrics 写入 `/workspace/results/result.json`（`{"status": "success", "metrics": {...}}` 格式）
-5. 同时把 `result.json` 的内容回显到 stdout（前缀 `result.json: `），供 agent 从标准输出解析
+`calc.sh` 负责：
+1. 从本次训练日志中提取所有 `tokens_per_sec_per_gpu` 行；
+2. 丢弃前 10 步与末尾 10 步，对剩余取算术平均；
+3. 计算总吞吐 = 单卡均值 × `world_size`（固定为 8）；
+4. 把 metrics 写入 `/workspace/results/result.json`，并将 `result.json` 回显到 stdout。
 
 ```bash
-python - <<'EOF'
-import json
-import os
-import re
-
-log_path    = '/workspace/logs/training.log'
-result_path = '/workspace/results/result.json'
-world_size  = 8       # 与 pretraining_qwen.sh 中 GPUS_PER_NODE * NNODES 保持一致
-warmup_skip = 10      # 丢弃前 10 步
-tail_skip   = 10      # 丢弃末尾 10 步
-
-with open(log_path) as f:
-    text = f.read()
-
-# 抓取所有 "tokens_per_sec_per_gpu: <number>" 行
-values = [float(x) for x in re.findall(r"tokens_per_sec_per_gpu:\s*([0-9.+\-eE]+)", text)]
-if len(values) <= warmup_skip + tail_skip:
-    raise SystemExit(
-        f"训练日志中 tokens_per_sec_per_gpu 行数不足（{len(values)}），训练可能未完成或被截断"
-    )
-
-trimmed = values[warmup_skip : len(values) - tail_skip]
-avg_per_gpu = sum(trimmed) / len(trimmed)
-
-metrics = {
-    'tokens_per_sec_per_gpu_avg': round(avg_per_gpu, 2),
-    'tokens_per_sec_total':       round(avg_per_gpu * world_size, 2),
-    'step_count_used':            len(trimmed),
-}
-
-# 1) 控制台人类可读打印
-print(f"tokens_per_sec_per_gpu_avg ({world_size} GPUs) : {metrics['tokens_per_sec_per_gpu_avg']:.2f}")
-print(f"tokens_per_sec_total                : {metrics['tokens_per_sec_total']:.2f}")
-print(f"step_count_used                     : {metrics['step_count_used']}")
-
-# 2) 写入 /workspace/results/result.json
-os.makedirs(os.path.dirname(result_path), exist_ok=True)
-result = {'status': 'success', 'metrics': metrics}
-with open(result_path, 'w', encoding='utf-8') as f:
-    json.dump(result, f, ensure_ascii=False, indent=2)
-
-# 3) 把 result.json 内容回显到 stdout（必须与文件路径在同一行，
-#    便于上层 mcp__agent 通过 "result.json" 关键字 + {...} 正则提取）
-print(f"result.json: {json.dumps(result, ensure_ascii=False)}")
-EOF
+TRAIN_LOG="$(cat /workspace/logs/train_Qwen3_8B_node0.path)"
+bash /workspace/scripts/calc.sh "$TRAIN_LOG" 8
 ```
 
 **输出示例**（基于一次正常训练）：
 ```
-tokens_per_sec_per_gpu_avg (8 GPUs) : 0
-tokens_per_sec_total                : 0
-step_count_used                     : 0
 result.json: {"status": "success", "metrics": {"tokens_per_sec_per_gpu_avg": 0, "tokens_per_sec_total": 0, "step_count_used": 0}}
 ```
 
@@ -338,5 +299,5 @@ result.json: {"status": "success", "metrics": {"tokens_per_sec_per_gpu_avg": 0, 
 
 **注意**：
 - 必须等待训练正常结束（`max_steps=100` 全部跑完）才能采集，否则可用 step 数不足
-- 切换 GPU 数后，需将脚本中的 `world_size` 同步调整为 `GPUS_PER_NODE * NNODES` 的实际值
-- 切换 `max_steps` 后，若有效 step 数 ≤ `warmup_skip + tail_skip` 会直接报错，需相应调小 `tail_skip`
+- resource 的 Qwen3-8B 训练入口固定为单机 8 卡；`calc.sh` 的第二个参数必须保持为 `8`
+- 切换 `max_steps` 后，若有效 step 数 ≤ 20，`calc.sh` 会直接报错
