@@ -2,6 +2,7 @@
 name: nvidia-nlp-inference
 description: NVIDIA GPU 上基于 sglang 的 DeepSeek 文本推理评测技能。用于指导 executor 完成容器启动、模型服务启动、压测脚本执行、推理日志采集与吞吐/延迟指标分析。
 metadata:
+  test_case: deepseek-R1
   multi_host_hint: references/multi_host.md
 ---
 
@@ -10,6 +11,11 @@ metadata:
 本 SKILL.md 描述**单机** 8 卡推理评测流程。**多机评测**（2 节点 16 卡跨机 TP
 等）请参见 `references/multi_host.md`——该文件会被 Generator 在
 `nnodes > 1` 时自动拼入 LLM prompt，单机用户无需关注。
+
+推理启动、压测和指标采集脚本分别是本 Skill 自带的
+`scripts/serve.sh`、`scripts/bench.sh` 和 `scripts/calc.sh`。Executor 会将它们预置到
+容器内 `/workspace/scripts/`；评测必须通过这些脚本执行，不要绕过脚本直接调用
+`sglang.launch_server`、`sglang.bench_serving` 或内嵌指标采集代码。
 
 ## 触发条件
 
@@ -160,62 +166,30 @@ ls -lh /data/datasets/
 # 检查 sglang 是否可用
 python3 -m sglang.launch_server --help | head -5
 python3 -m sglang.bench_serving --help | head -5
+
+# 检查 Skill 预置脚本
+test -f /workspace/scripts/serve.sh
+test -f /workspace/scripts/bench.sh
+test -f /workspace/scripts/calc.sh
 ```
 
 ### 步骤 2：启动模型服务
 
 在容器内启动 `sglang.launch_server`，对 DeepSeek-R1 进行 8 卡张量并行推理服务化：
 
+脚本会启动服务、写入 `serve.log` 和 `serve.pid`，并通过
+`/v1/models` 等待服务就绪；只有服务进程存活且 HTTP 检查成功时才返回成功。
+
 ```bash
-mkdir -p /workspace/logs
-
-# 后台启动 sglang 服务（推荐，便于在同一 shell 内继续执行压测）
-nohup python3 -m sglang.launch_server \
-  --model-path /data/models/snapshots/4236a6af538feda4548eca9ab308586007567f52 \
-  --tp 8 \
-  --host 0.0.0.0 \
-  --port 30000 \
-  --trust-remote-code \
-  > /workspace/logs/serve.log 2>&1 &
-SERVER_PID=$!
-
-echo ${SERVER_PID} > /workspace/logs/serve.pid
+# MODEL_PATH 可覆盖为实际使用的 snapshots/<commit_hash> 目录。
+# 默认值为 DeepSeek-R1-0528 snapshot。
+MODEL_PATH=/data/models/models--deepseek-ai--DeepSeek-R1-0528/snapshots/4236a6af538feda4548eca9ab308586007567f52 \
+TP=8 PORT=30000 bash /workspace/scripts/serve.sh
 ```
 
 > 多机评测的环境变量（NVSHMEM / NCCL）、额外启动参数（`--dist-init-addr` /
 > `--nnodes` / `--node-rank` / 跨机 `--tp`）以及 rank-aware 脚本模板，
 > 统一在 `references/multi_host.md` 内描述，本文不重复。
-
-**等待服务就绪**（关键，必须等到 HTTP `/v1/models` 真就绪才能进入步骤 3）：
-
-```bash
-# ready check：进程存活 + HTTP /v1/models 双重确认。
-# 端口 listen 早于模型加载完成（大模型可能要 20+ 分钟），仅检端口或仅 grep
-# 日志关键字会让步骤 3 在服务尚未就绪时打过来，命中 connection refused 或
-# NCCL 卡死。严禁仅靠 sleep N 或 `tail -F | grep`。
-TIMEOUT=2400   # 40 分钟，足够大模型加载 + capture cuda graph
-ELAPSED=0
-while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
-  # 服务进程死了立刻失败，不要傻等
-  if ! kill -0 ${SERVER_PID} 2>/dev/null; then
-    echo "ERROR: server pid ${SERVER_PID} died" >&2
-    tail -n 200 /workspace/logs/serve.log >&2
-    exit 1
-  fi
-  # 必须命中真正的 model-ready 端点
-  if curl -fs -m 5 http://127.0.0.1:30000/v1/models >/dev/null 2>&1; then
-    echo "server ready after ${ELAPSED}s"
-    break
-  fi
-  sleep 10
-  ELAPSED=$((ELAPSED + 10))
-done
-if [ ${ELAPSED} -ge ${TIMEOUT} ]; then
-  echo "ERROR: server not ready after ${TIMEOUT}s" >&2
-  tail -n 200 /workspace/logs/serve.log >&2
-  exit 1
-fi
-```
 
 **输出产物**：
 
@@ -225,35 +199,23 @@ fi
 | `serve.pid` | `/workspace/logs/serve.pid` | 服务进程 PID，便于步骤 3 完成后停止服务 |
 
 **注意**：
-- 若模型版本切换，需同步修改 `--model-path` 中的 `snapshots/<commit_hash>`
-- 若 GPU 数量改变，`--tp` 必须同步调整，并与步骤 4 指标采集脚本中的 `nproc` 对齐
-- 默认监听 `0.0.0.0:30000`，与步骤 3 压测脚本的 `HOST` / `PORT` 默认值一致
+- 若模型版本切换，需通过 `MODEL_PATH` 指定实际的 `snapshots/<commit_hash>`
+- 若 GPU 数量改变，`TP` 必须同步调整，并与步骤 4 `calc.sh` 的第二个参数保持一致
+- 默认监听 `0.0.0.0:30000`，与步骤 3 `bench.sh` 的 `HOST` / `PORT` 默认值一致
 
 ### 步骤 3：执行压测
 
 服务就绪后，使用 `sglang.bench_serving` 对其发起压测：
 
 ```bash
-HOST=${HOST:-127.0.0.1}
-PORT=${PORT:-30000}
-INPUT_LEN=${INPUT_LEN:-2048}
-OUTPUT_LEN=${OUTPUT_LEN:-2048}
-NUM_PROMPTS=${NUM_PROMPTS:-1000}
-
-python3 -m sglang.bench_serving \
-  --model /data/models/models--deepseek-ai--DeepSeek-R1-0528/snapshots/4236a6af538feda4548eca9ab308586007567f52 \
-  --random-range-ratio 1 \
-  --backend sglang \
-  --dataset-name random \
-  --dataset-path /data/datasets/ShareGPT_V3_unfiltered_cleaned_split.json \
-  --random-input-len "${INPUT_LEN}" \
-  --random-output-len "${OUTPUT_LEN}" \
-  --num-prompts "${NUM_PROMPTS}" \
-  --host "${HOST}" \
-  --port "${PORT}" \
-  --output-file /workspace/logs/bench.csv \
-  --seed 42 2>&1 | tee /workspace/logs/bench.log
+# 请保持默认的 INPUT_LEN、OUTPUT_LEN、NUM_PROMPTS，确保结果可与基线比较。
+MODEL_PATH=/data/models/models--deepseek-ai--DeepSeek-R1-0528/snapshots/4236a6af538feda4548eca9ab308586007567f52 \
+HOST=127.0.0.1 PORT=30000 bash /workspace/scripts/bench.sh
 ```
+
+脚本默认从 `/data/datasets/ShareGPT_V3_unfiltered_cleaned_split.json` 读取数据集，
+并写入 `/workspace/logs/bench.log` 和 `/workspace/logs/bench.csv`。可用 `DATASET_PATH`、
+`LOG_ROOT` 覆盖相应路径。
 
 **输出产物**：
 
@@ -308,93 +270,12 @@ Mean ITL (ms):                           0
 
 #### 指标采集方法
 
-**Python 脚本提取**
-
-脚本职责：
-1. 从 `bench.log` 中提取性能汇总段（含 `Output token throughput`、`Mean TTFT` 等字段）
-2. 计算 `output_tokens_per_sec_per_gpu`（输出吞吐 / tp）
-3. 把 metrics 写入 `/workspace/results/result.json`（`{"status": "success", "metrics": {...}}` 格式）
-4. 同时把 `result.json` 的内容回显到 stdout（前缀 `result.json: `），供 mcp__agent 从标准输出解析
+`calc.sh` 校验所有必需指标均存在且为有限数值，随后写入并回显
+`/workspace/results/result.json`：
 
 ```bash
-python3 - <<'EOF'
-import json
-import os
-import re
-
-log_path    = '/workspace/logs/bench.log'
-result_path = '/workspace/results/result.json'
-tp          = 8  # 与步骤 2 中 sglang.launch_server --tp 保持一致
-
-with open(log_path) as f:
-    text = f.read()
-
-def grab(pattern, cast=float):
-    """抓取最后一次匹配（避免被中间日志干扰），返回 cast 后的值或 None。"""
-    matches = re.findall(pattern, text)
-    if not matches:
-        return None
-    return cast(matches[-1])
-
-metrics_raw = {
-    'output_token_throughput': grab(r'Output token throughput \(tok/s\):\s+([\d.]+)'),
-    'total_token_throughput':  grab(r'Total token throughput \(tok/s\):\s+([\d.]+)'),
-    'concurrency':             grab(r'Concurrency:\s+([\d.]+)'),
-    'mean_e2e_latency_ms':     grab(r'Mean E2E Latency \(ms\):\s+([\d.]+)'),
-    'mean_ttft_ms':            grab(r'Mean TTFT \(ms\):\s+([\d.]+)'),
-    'mean_tpot_ms':            grab(r'Mean TPOT \(ms\):\s+([\d.]+)'),
-    'mean_itl_ms':             grab(r'Mean ITL \(ms\):\s+([\d.]+)'),
-}
-
-if metrics_raw['output_token_throughput'] is None:
-    raise SystemExit("未找到压测汇总行（Output token throughput），压测可能未结束或日志被截断")
-
-ottp = metrics_raw['output_token_throughput']
-
-metrics = {
-    'output_token_throughput':       round(ottp, 2),
-    'output_tokens_per_sec_per_gpu': round(ottp / tp, 2),
-    'total_token_throughput':        round(metrics_raw['total_token_throughput'], 2),
-    'concurrency':                   round(metrics_raw['concurrency'], 2),
-    'mean_e2e_latency_ms':           round(metrics_raw['mean_e2e_latency_ms'], 2),
-    'mean_ttft_ms':                  round(metrics_raw['mean_ttft_ms'], 2),
-    'mean_tpot_ms':                  round(metrics_raw['mean_tpot_ms'], 2),
-    'mean_itl_ms':                   round(metrics_raw['mean_itl_ms'], 2),
-}
-
-# 1) 控制台人类可读打印
-print(f"Output token throughput (tok/s)       : {metrics['output_token_throughput']:.2f}")
-print(f"output_tokens_per_sec_per_gpu ({tp} GPUs) : {metrics['output_tokens_per_sec_per_gpu']:.2f}")
-print(f"Total token throughput (tok/s)        : {metrics['total_token_throughput']:.2f}")
-print(f"Concurrency                           : {metrics['concurrency']:.2f}")
-print(f"Mean E2E Latency (ms)                 : {metrics['mean_e2e_latency_ms']:.2f}")
-print(f"Mean TTFT (ms)                        : {metrics['mean_ttft_ms']:.2f}")
-print(f"Mean TPOT (ms)                        : {metrics['mean_tpot_ms']:.2f}")
-print(f"Mean ITL (ms)                         : {metrics['mean_itl_ms']:.2f}")
-
-# 2) 写入 /workspace/results/result.json
-os.makedirs(os.path.dirname(result_path), exist_ok=True)
-result = {'status': 'success', 'metrics': metrics}
-with open(result_path, 'w', encoding='utf-8') as f:
-    json.dump(result, f, ensure_ascii=False, indent=2)
-
-# 3) 把 result.json 内容回显到 stdout（必须与文件路径在同一行，
-#    便于上层 agent 通过 "result.json" 关键字 + {...} 正则提取）
-print(f"result.json: {json.dumps(result, ensure_ascii=False)}")
-EOF
-```
-
-**输出示例**（基于上方样例日志）：
-```
-Output token throughput (tok/s)       : 0
-output_tokens_per_sec_per_gpu (8 GPUs) : 0
-Total token throughput (tok/s)        : 0
-Concurrency                           : 0
-Mean E2E Latency (ms)                 : 0
-Mean TTFT (ms)                        : 0
-Mean TPOT (ms)                        : 0
-Mean ITL (ms)                         : 0
-result.json: {"status": "success", "metrics": {"output_token_throughput": 0, "output_tokens_per_sec_per_gpu": 0, "total_token_throughput": 0, "concurrency": 0, "mean_e2e_latency_ms": 0, "mean_ttft_ms": 0, "mean_tpot_ms": 0, "mean_itl_ms": 0}}
+# 用实际的 TP 值替换 8；第一个参数可替换为其他 bench.log 路径。
+bash /workspace/scripts/calc.sh /workspace/logs/bench.log 8
 ```
 
 **结果文件**（`/workspace/results/result.json`）：
@@ -415,6 +296,6 @@ result.json: {"status": "success", "metrics": {"output_token_throughput": 0, "ou
 ```
 
 **注意**：
-- 必须等待压测完成（`bench.log` 末尾出现 `Output token throughput` 汇总行）才能采集，否则正则会无输出
-- 切换 `--tp` 后，需将脚本中的 `tp` 同步调整为步骤 2 `sglang.launch_server` 的实际值
-- 如改动了 `tee` 输出路径，需同步更新 `log_path`
+- 必须等待压测完成（`bench.log` 末尾出现 `Output token throughput` 汇总行）才能执行 `calc.sh`
+- 切换 `TP` 后，需将 `calc.sh` 的第二个参数同步调整为实际值
+- 如通过 `LOG_ROOT` 改动日志目录，需将实际 `bench.log` 路径作为 `calc.sh` 的第一个参数
