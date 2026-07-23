@@ -1,181 +1,59 @@
-# nvidia-nlp-inference 多机启动模板提示
+# nvidia-nlp-inference 多机执行流程
 
-本文件由 SKILL.md frontmatter `multi_host_hint` 引用，在 `nnodes > 1` 时会被
-拼入 Generator 的 system prompt。这里只补充 **sglang 跨机推理特有** 的内容，
-与 Generator 通用多机段落（result.json 路径、ready check、blocking 约定等）
-配合使用。
+本文件由 SKILL.md 的 `multi_host_hint` 在 `nnodes > 1` 时注入。多机服务必须使用
+`scripts/serve_multi_host.sh`；它基于已跑通的 DeepSeek-R1 跨机模板实现了残留进程清理、
+跨机 TP、per-rank PID/日志和 rank-aware 就绪检查。不得在任务脚本中重新拼接
+`sglang.launch_server`。
 
-## 典型规模
+模型差异（模型路径、trust remote code、超时、压测长度、NCCL/NVSHMEM）统一从
+`model_profiles.md` 的所选 profile 注入。调用前必须执行该 profile 的“多机流程”段；
+脚本不会猜测网卡或 GID，也不会替模型决定单机或多机。
 
-- DeepSeek-R1 671B 16 卡推理：`nnodes=2`、每台 8×H200、`WORLD_SIZE=16`
-- 总并行度 `--tp = WORLD_SIZE`（即 16），跨两机做张量并行
-- 单机情形（`nnodes=1`）请直接走 SKILL.md 主流程，不要套用本模板
+## 必需拓扑与 profile 参数
 
-## 步骤拆分（CommandGroup）
+Executor 注入：`MASTER_ADDR`、`MASTER_PORT`、`NNODES`、`NODE_RANK`、
+`GPUS_PER_NODE`。脚本计算 `WORLD_SIZE=NNODES*GPUS_PER_NODE`，并强制使用
+`--tp "$WORLD_SIZE"`，而不是单机卡数。
 
-建议生成 3 个 step（不要合并到一个脚本里）：
+Profile 注入：
 
-| step_id | target | blocking | 作用 |
-|---|---|---|---|
-| `launch_server` | `all` | `false` | 每台机器内部 `nohup` 起 `sglang.launch_server`，前台 `until` 探活，仅 rank0 暴露 HTTP；ready 后 `exit 0` |
-| `bench` | `rank0` | `true` | 服务就绪后跑 `sglang.bench_serving` 压测，写 `bench.log` / `bench.csv` |
-| `collect_metrics` | `rank0` | `true` | 解析 `bench.log`，写 `/workspace/results/result.json` |
+| 参数 | 说明 |
+|---|---|
+| `MODEL_PATH` | 可选；未提供时自动在 `/data/models` 找到模型 |
+| `TRUST_REMOTE_CODE` | `1` 时追加 `--trust-remote-code` |
+| `READY_TIMEOUT` | 服务加载与 graph capture 等待秒数 |
+| `INPUT_LEN`、`OUTPUT_LEN`、`NUM_PROMPTS` | benchmark 参数 |
+| `DATASET_PATH`、`DATASET_PREFER` | 可选的本地 JSON 选择规则 |
+| `NCCL_*`、`NVSHMEM_*` | 实际集群网络配置，必须在 launch 前 export |
+| `EXTRA_SERVER_ARGS` | profile 审核后的其他 SGLang 参数 |
 
-`metric_source` 指向 `collect_metrics`。
+## CommandGroup
 
-### launch_server step（rank-aware 模板）
+固定为三个步骤，`metric_source` 指向 `collect_metrics`：
 
+| step_id | target | blocking | depends_on | 命令 |
+|---|---|---:|---|---|
+| `launch_server` | `all` | `false` | — | `bash /workspace/scripts/serve_multi_host.sh` |
+| `bench` | `rank0` | `true` | `launch_server` | `HOST=127.0.0.1 bash /workspace/scripts/bench.sh` |
+| `collect_metrics` | `rank0` | `true` | `bench` | `bash /workspace/scripts/calc.sh /workspace/logs/bench.log "$WORLD_SIZE"` |
 
-```bash
-#!/bin/bash
-# --- 残留清理（防止上次 nohup 占住 GPU）---
-pkill -9 -f 'sglang.launch_server' 2>/dev/null || true
-pkill -9 -f 'sglang.srt'           2>/dev/null || true
-sleep 3
+`launch_server` 在每台机器写 `/workspace/logs/serve.rank${NODE_RANK}.log` 和
+`serve.rank${NODE_RANK}.pid`，以适配共享日志盘。仅 rank0 写不带 rank 后缀的
+`bench.log`、`bench.csv` 和唯一结果 `/workspace/results/result.json`。
 
-# --- NVSHMEM（sglang 跨机 MoE / EP 通信走 NVSHMEM IBGDA）---
-export NVSHMEM_HCA_LIST=mlx5_0,mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_7
-export NVSHMEM_IB_GID_INDEX=3
-export NVSHMEM_IBGDA_NUM_RC_PER_PE=8
-export NVSHMEM_IB_TRAFFIC_CLASS=186
-export NVSHMEM_DISABLE_NVLs=1
+## 就绪与网络约束
 
-# --- NCCL（sglang 跨机 TP / allreduce 走 NCCL over IB）---
-export NCCL_SOCKET_IFNAME=bond0
-export NCCL_IB_HCA="=mlx5_0,mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_7"
-export NCCL_IB_GID_INDEX=3
-export NCCL_IB_TC=186
-export NCCL_NVLS_ENABLE=0
+- rank0：进程存活且 `/v1/models` 返回成功后才允许 bench。
+- 非 rank0：进程存活且服务日志出现 `Capture cuda graph end` 或 `The server is fired up` 才完成。
+- 不要用固定 sleep、ssh/scp 或跨机文件锁；Runner 的 `target`、`depends_on` 负责步骤协调，SGLang 用 `${MASTER_ADDR}:${MASTER_PORT}` 协调。
+- 不要添加 Docker `-p`；多机容器使用 host network。
+- `NCCL_IB_HCA` 若使用物理 mlx5 网卡，必须使用 `=mlx5_0,...` 精确匹配，避免误匹配 bond 虚拟网卡。
 
-mkdir -p /workspace/logs
+## 故障排查
 
-# /data/models/snapshots/<commit_hash> 走容器挂载点，由 docker run -v 决定）
-MODEL_PATH=/data/models/snapshots/4236a6af538feda4548eca9ab308586007567f52
-
-nohup python3 -m sglang.launch_server \
-  --model ${MODEL_PATH} \
-  --dist-init-addr ${MASTER_ADDR}:${MASTER_PORT} \
-  --nnodes ${NNODES} \
-  --node-rank ${NODE_RANK} \
-  --tp ${WORLD_SIZE} \
-  --host 0.0.0.0 \
-  --port 30000 \
-  --trust-remote-code \
-  > /workspace/logs/serve.rank${NODE_RANK}.log 2>&1 &
-SERVER_PID=$!
-echo ${SERVER_PID} > /workspace/logs/serve.rank${NODE_RANK}.pid
-
-# --- ready check：进程存活 + 业务就绪信号双重确认，禁止仅靠 sleep N ---
-TIMEOUT=2400   # 40 分钟，足够 671B 跨机加载 + capture cuda graph
-ELAPSED=0
-while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
-  if ! kill -0 ${SERVER_PID} 2>/dev/null; then
-    echo "ERROR: rank${NODE_RANK} server pid ${SERVER_PID} died" >&2
-    tail -n 200 /workspace/logs/serve.rank${NODE_RANK}.log >&2
-    exit 1
-  fi
-  if [ "${NODE_RANK}" = "0" ]; then
-    # rank0 暴露 HTTP，用 /v1/models 判定真就绪
-    if curl -fs -m 5 http://127.0.0.1:30000/v1/models >/dev/null 2>&1; then
-      echo "rank0 server ready after ${ELAPSED}s"
-      exit 0
-    fi
-  else
-    # 非 rank0 不暴露 HTTP，用日志关键字 + 进程存活双重确认
-    if grep -q "Capture cuda graph end\|The server is fired up" \
-         /workspace/logs/serve.rank${NODE_RANK}.log 2>/dev/null; then
-      echo "rank${NODE_RANK} worker ready after ${ELAPSED}s"
-      exit 0
-    fi
-  fi
-  sleep 10
-  ELAPSED=$((ELAPSED + 10))
-done
-echo "ERROR: rank${NODE_RANK} not ready after ${TIMEOUT}s" >&2
-tail -n 200 /workspace/logs/serve.rank${NODE_RANK}.log >&2
-exit 1
-```
-
-关键点：
-
-- **`--tp = ${WORLD_SIZE}`**（不是 `${GPUS_PER_NODE}`）；跨机 TP，全卡协同。
-  例：2×8 H200 → `WORLD_SIZE=16` → `--tp 16`
-- **`--dist-init-addr ${MASTER_ADDR}:${MASTER_PORT}`** 由 Executor 注入，
-  不要自己另起端口或写死 IP（人工脚本里写死的 `10.102.97.33:20000` 在 agent
-  评测下由 Executor 用 rank0 的 ssh_host + 实时扫描出的空闲端口替换）
-- **`--nnodes ${NNODES}` / `--node-rank ${NODE_RANK}`** 必填，sglang 据此识别
-  当前进程在分布式拓扑中的位置
-- **NCCL / NVSHMEM env 一定要 export 在 `python3 -m sglang.launch_server`
-  之前**；这两组参数控制 RoCE/IB 走哪些 HCA、用哪个 GID、走哪条流量类。
-  缺失或值不对会直接 NCCL/NVSHMEM init 失败或 hang
-- **`NCCL_IB_HCA="=mlx5_0,..."`** 等号前缀是 NCCL 的精确匹配语法（不带等号
-  会按前缀匹配，可能命中 `mlx5_bond_*` 这类非物理网卡），**不能省**
-- **不要加 `-p host:container` 端口映射**：容器已经是 `--network=host`，
-  端口 30000 直通宿主网络
-- **per-rank 文件必须带 `${NODE_RANK}` 后缀**：`serve.log` / `serve.pid` 等
-  通常挂在共享 NFS / GPFS / Lustre 下，不加后缀会两台机器互相覆盖
-- **`--model`** 与 `--model-path` 在当前 sglang 版本是同义；本模板沿用人工
-  评测脚本写法（`--model`）
-
-### bench step（仅 rank0）
-
-```bash
-#!/bin/bash
-set -e
-
-HOST=127.0.0.1
-PORT=30000
-INPUT_LEN=2048
-OUTPUT_LEN=2048
-NUM_PROMPTS=1000
-
-mkdir -p /workspace/logs
-
-python3 -m sglang.bench_serving \
-  --model /data/models/snapshots/4236a6af538feda4548eca9ab308586007567f52 \
-  --random-range-ratio 1 \
-  --backend sglang \
-  --dataset-name random \
-  --dataset-path /data/datasets/ShareGPT_V3_unfiltered_cleaned_split.json \
-  --random-input-len "${INPUT_LEN}" \
-  --random-output-len "${OUTPUT_LEN}" \
-  --num-prompts "${NUM_PROMPTS}" \
-  --host "${HOST}" \
-  --port "${PORT}" \
-  --output-file /workspace/logs/bench.csv \
-  --seed 42 2>&1 | tee /workspace/logs/bench.log
-```
-
-约束：
-
-- 必须 `target=rank0` 且 `blocking=true`
-- `--host 127.0.0.1`：bench 与 rank0 server 同容器，走 host 网络 loopback
-- `bench.log` / `bench.csv` 只 rank0 写，**不需要** `${NODE_RANK}` 后缀
-- `depends_on: ["launch_server"]`
-
-### collect_metrics step（仅 rank0）
-
-正则提取 `bench.log` 末尾的性能汇总，按 SKILL.md 「步骤 4」的 Python 脚本写
-`/workspace/results/result.json`。**唯一允许的路径**就是这个，写到其它路径
-（如 `/workspace/result.json` 少一个 s）agent 不会收集。
-
-关键调整（相对单机）：
-- `tp = WORLD_SIZE` 而不是单机的 8；`output_tokens_per_sec_per_gpu = output_throughput / WORLD_SIZE`
-- `log_path = '/workspace/logs/bench.log'`（rank0 那份，**不**带 `_rank0` 后缀）
-- `depends_on: ["bench"]`，`blocking=true`，**它就是组内的终端 step**
-
-## 跨机协调
-
-- 严禁 `ssh` / `scp` 到其它机器，所有同步走 `${MASTER_ADDR}:${MASTER_PORT}` socket
-- 每个 step 的 `target`、`depends_on` 让 Runner 帮你做拓扑同步，不要在脚本里
-  自己 `while !; do sleep`、`flock` 跨机文件锁
-
-## 常见问题
-
-| 现象 | 原因 | 解决 |
-|---|---|---|
-| `memory unbalanced` / OOM at start | 上一次 nohup 服务还活着占着 GPU | 脚本开头先 `pkill -9 -f sglang.launch_server` |
-| `NCCL ... timeout` 跨机 | IB 网络参数没设对 / HCA 名错 | 严格按上方 NCCL_* / NVSHMEM_* 一组 env 替换 |
-| `NCCL_IB_HCA` 命中 bond 虚拟口而非物理 HCA | 没写 `=` 前缀，按前缀匹配错位 | 用 `NCCL_IB_HCA="=mlx5_0,..."` 精确匹配 |
-| ready check 误判 → bench step 立即报 connection refused | 只检端口 listen，没等模型加载完 | ready check 改成命中 `/v1/models` / `/health` |
-| rank0 写 result.json 失败 | 容器内 `/workspace/results` 不可写 | 检查 `-v $RESULTS_DIR:/workspace/results:rw` 挂载 |
+| 现象 | 处理 |
+|---|---|
+| OOM / GPU 不均衡 | 检查每个 rank 的清理与 `serve.rank*.log`，确认没有遗留 SGLang 服务。 |
+| NCCL/NVSHMEM timeout 或 hang | 核对 profile 的 HCA、GID、traffic class 与 socket 网卡；不要跨集群复用不匹配的 DeepSeek 网络参数。 |
+| bench connection refused | 查看 rank0 服务日志；必须通过 `/v1/models`，不能仅等待端口监听。 |
+| 没有 result.json | 确认 `collect_metrics` 在 rank0 的 bench 后执行，并且 `/workspace/results` 可写。 |
