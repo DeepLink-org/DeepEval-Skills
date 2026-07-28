@@ -16,11 +16,9 @@ nvidia-nlp-inference/
 │   ├── bench.sh
 │   ├── calc.sh
 │   └── <model>/                   # 仅该模型需要的定制脚本（可选）
-├── references/
-│   ├── model_profiles.md          # 模型 profile 索引和通用配置
-│   └── models/<model>.md          # 模型专用参数、拓扑和执行顺序（可选）
-├── deepseek_r1/                   # 独立的 DeepSeek-R1 专用 skill
-└── llama2_7b/                     # 独立的 Llama-2-7B 专用 skill
+└── references/
+    ├── model_profiles.md          # 模型 profile 索引和通用配置
+    └── models/<model>.md          # 模型专用参数、拓扑和执行顺序（可选）
 ```
 
 ## 通用 skill 与模型专用 skill 的关系
