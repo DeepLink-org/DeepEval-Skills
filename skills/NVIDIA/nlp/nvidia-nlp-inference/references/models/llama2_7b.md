@@ -27,15 +27,26 @@ INT8 weight-only 场景把 KV cache 填满、持续 request retraction 后导致
 
 ## 单机精度矩阵流程
 
-`scripts/llama2/run_precision_matrix.sh` 固定为 FP16 的 `--dtype float16` 和 INT8 的
+`scripts/llama/run_precision_matrix.sh` 固定为 FP16 的 `--dtype float16` 和 INT8 的
 `--dtype float16 --torchao-config int8wo`；脚本为每个精度隔离服务、日志和结果，最后写入
 `/workspace/results/result.json`。
+
+顶层评测脚本的前三个有效命令必须从当前 Generator 结果契约把本次任务的动态字段以**字面量**导出；
+不得先检查变量、不得使用默认值、`unknown`、固定 hash、变量展开或猜测值。矩阵脚本会生成并校验最终
+结果、导出 `DURATION_SECONDS`；调用后顶层脚本必须直接结束，不得用 Python、`python -c`、heredoc 或
+shell 逻辑重建、校验或覆盖 `result.json`：
+
+```bash
+export TASK_ID="<当前任务 ID>"
+export WORKLOAD_FINGERPRINT="<当前结果契约给出的 workload_fingerprint>"
+export SCHEMA_VERSION="1.2"
+```
 
 ```bash
 GPU_IDS="$GPU_IDS" TP="$TP" PORT="$PORT" READY_TIMEOUT="$READY_TIMEOUT" INPUT_LEN="$INPUT_LEN" \
   OUTPUT_LEN="$OUTPUT_LEN" NUM_PROMPTS="$NUM_PROMPTS" MAX_CONCURRENCY="$MAX_CONCURRENCY" \
   BENCH_TIMEOUT="$BENCH_TIMEOUT" DATASET_PREFER="$DATASET_PREFER" PRECISIONS="$PRECISIONS" \
-  bash /workspace/scripts/llama2/run_precision_matrix.sh
+  bash /workspace/scripts/llama/run_precision_matrix.sh
 ```
 
 最终结果必须纳入 `/workspace/results/result.json` 的全部数值，包括

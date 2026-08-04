@@ -35,11 +35,11 @@ Profile 注入：
 |---|---|---:|---|---|
 | `launch_server` | `all` | `false` | — | `bash /workspace/scripts/serve_multi_host.sh` |
 | `bench` | `rank0` | `true` | `launch_server` | `HOST=127.0.0.1 bash /workspace/scripts/bench.sh` |
-| `collect_metrics` | `rank0` | `true` | `bench` | `bash /workspace/scripts/calc.sh /workspace/logs/bench.log "$WORLD_SIZE"` |
+| `collect_metrics` | `rank0` | `true` | `bench` | `bash /workspace/scripts/calc.sh /workspace/logs/bench.log "$WORLD_SIZE" /workspace/logs/bench.csv` |
 
 `launch_server` 在每台机器写 `/workspace/logs/serve.rank${NODE_RANK}.log` 和
 `serve.rank${NODE_RANK}.pid`，以适配共享日志盘。仅 rank0 写不带 rank 后缀的
-`bench.log`、`bench.csv` 和唯一结果 `/workspace/results/result.json`。
+`bench.log`、`bench.csv`（单行 JSON summary）和唯一结果 `/workspace/results/result.json`。
 
 ## 就绪与网络约束
 
