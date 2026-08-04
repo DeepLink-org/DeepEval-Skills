@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Llama-2 precision workflow. Profiles select supported values through
+# Llama-family precision workflow. Llama-1 and Llama-2 Profiles select supported values through
 # PRECISIONS (for example, 7B uses fp16/int8 and 70B uses fp16/int8).
 # Generic serving, benching and metric parsing remain in the parent scripts.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +9,12 @@ PRECISIONS="${PRECISIONS:-fp16 int8}"; TP="${TP:-1}"; RESULT_ROOT="${RESULT_ROOT
 LOG_ROOT="${LOG_ROOT:-/workspace/logs}"; HOST="${HOST:-127.0.0.1}"; PORT="${PORT:-30000}"; MODEL_PATH="${MODEL_PATH:-}"
 READY_TIMEOUT="${READY_TIMEOUT:-1200}"; INPUT_LEN="${INPUT_LEN:-1024}"; OUTPUT_LEN="${OUTPUT_LEN:-1024}"; NUM_PROMPTS="${NUM_PROMPTS:-1000}"
 MAX_CONCURRENCY="${MAX_CONCURRENCY:-}"; BENCH_TIMEOUT="${BENCH_TIMEOUT:-1800}"
+: "${TASK_ID:?TASK_ID is required}"
+: "${WORKLOAD_FINGERPRINT:?WORKLOAD_FINGERPRINT is required}"
+: "${SCHEMA_VERSION:?SCHEMA_VERSION is required}"
+[[ "$SCHEMA_VERSION" == "1.2" ]] || { echo "SCHEMA_VERSION must be 1.2" >&2; exit 1; }
 mkdir -p "$RESULT_ROOT" "$LOG_ROOT"
+START_TS="$(date +%s)"
 stop_server() { local pid_file="$1/serve.pid" pid; [[ -s "$pid_file" ]] && { pid="$(<"$pid_file")"; kill -TERM "$pid" 2>/dev/null || true; for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done; kill -KILL "$pid" 2>/dev/null || true; }; for _ in $(seq 1 60); do curl -fs -m 2 "http://${HOST}:${PORT}/v1/models" >/dev/null 2>&1 || { rm -f "$pid_file"; return 0; }; sleep 1; done; echo "ERROR: SGLang listener on ${HOST}:${PORT} did not stop" >&2; return 1; }
 cleanup_log_root=''; cleanup() { [[ -n "$cleanup_log_root" ]] && stop_server "$cleanup_log_root" || true; }; trap cleanup EXIT
 for precision in $PRECISIONS; do
@@ -28,4 +33,7 @@ done
 test -s "$RESULT_ROOT/fp16/result.json"
 cp "$RESULT_ROOT/fp16/result.json" "$RESULT_ROOT/result.json.tmp"
 mv "$RESULT_ROOT/result.json.tmp" "$RESULT_ROOT/result.json"
+bash "$SCRIPT_DIR/llama/validate_result.sh" "$RESULT_ROOT/result.json"
+DURATION_SECONDS="$(( $(date +%s) - START_TS ))"
+export DURATION_SECONDS
 echo "result.json: $(cat "$RESULT_ROOT/result.json")"
