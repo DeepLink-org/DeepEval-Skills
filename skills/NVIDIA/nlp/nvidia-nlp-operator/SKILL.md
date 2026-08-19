@@ -1,6 +1,10 @@
 ---
 name: nvidia-nlp-operator
 description: NVIDIA GPU 上 CUDA 算子性能评测技能。支持 GEMM、Conv2d（FP16/FP32）、长尾算子、Transformer Block、通信算子等基准值生成与性能测试，用于指导 executor 完成容器启动、编译、基准值生成、测试验证与性能指标采集的完整流程。
+metadata:
+  benchmark_specs:
+    gemm: benchmark_specs/gemm.yaml
+    conv: benchmark_specs/conv.yaml
 ---
 
 ### 触发条件
@@ -207,9 +211,64 @@ ls -lh /workspace/logs/
 
 #### 步骤 1：编译
 
+GEMM 必须直接使用 `nvcc` 编译。不要运行本项目的顶层 CMake：该 CMake 同时配置
+Conv2d 并强制查找 cuDNN，而 GEMM 镜像不保证包含 cuDNN，CMake 失败后继续使用旧
+CSV 会产生“评测成功但没有执行 kernel”的假阳性。
+
 ```bash
+set -euo pipefail
+
 cd /workspace/operators/cuda_ops
-mkdir -p build && cd build && cmake .. && make 2>&1 | tee /workspace/logs/compile.log
+mkdir -p build
+rm -f build/gemm
+nvcc -O3 -lcublas -o build/gemm cuda_gemm.cpp \
+  2>&1 | tee /workspace/logs/compile_gemm.log
+test -x build/gemm
+```
+
+Conv2d 同样必须直接使用 `nvcc` 重新编译，不得复用旧的 `build/conv`。当前镜像的
+cuDNN 可能来自 `nvidia.cudnn` Python 包，只有带版本号的 `libcudnn.so.*` 而没有
+`libcudnn.so` 链接；因此必须解析实际头文件和动态库文件，并使用
+`-l:<实际文件名>` 链接。禁止仅使用 `-lcudnn` 后在链接失败时继续执行旧二进制。
+
+```bash
+set -euo pipefail
+
+cd /workspace/operators/cuda_ops
+mkdir -p build
+rm -f build/conv
+
+CUDNN_PACKAGE_ROOT=$(python3 - <<'PY'
+from pathlib import Path
+import nvidia.cudnn
+
+print(Path(nvidia.cudnn.__file__).resolve().parent)
+PY
+)
+CUDNN_INCLUDE_DIR="$CUDNN_PACKAGE_ROOT/include"
+CUDNN_LIB_DIR="$CUDNN_PACKAGE_ROOT/lib"
+CUDNN_LIB_FILE=$(python3 - "$CUDNN_LIB_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+library_dir = Path(sys.argv[1])
+candidates = sorted(library_dir.glob("libcudnn.so*"))
+if not candidates:
+    raise SystemExit(f"libcudnn.so* not found in {library_dir}")
+print(candidates[0])
+PY
+)
+
+test -f "$CUDNN_INCLUDE_DIR/cudnn.h"
+test -f "$CUDNN_LIB_FILE"
+nvcc -O3 \
+  -I"$CUDNN_INCLUDE_DIR" \
+  -L"$CUDNN_LIB_DIR" \
+  -l:"$(basename "$CUDNN_LIB_FILE")" \
+  -Xlinker -rpath -Xlinker "$CUDNN_LIB_DIR" \
+  -o build/conv cudnn_convforward.cpp \
+  2>&1 | tee /workspace/logs/compile_conv.log
+test -x build/conv
 ```
 
 **验证编译产物**：
@@ -241,15 +300,30 @@ cd /workspace/operators/cuda_ops
 **批量运行**（推荐）：
 
 ```bash
+set -euo pipefail
 cd /workspace/operators
 
 # 生成 GEMM 基准值
+GEMM_F16_BEFORE=$(stat -c %Y /workspace/operators/gemm_f16.csv)
 python test_gemm.py /workspace/operators/gemm_f16.csv 16 0 2>&1 | tee /workspace/logs/gemm_f16_baseline.log
-python test_gemm.py /workspace/operators/gemm_f32.csv 32 0 2>&1 | tee /workspace/logs/gemm_f32_baseline.log
+GEMM_F16_AFTER=$(stat -c %Y /workspace/operators/gemm_f16.csv)
+test "$GEMM_F16_AFTER" -gt "$GEMM_F16_BEFORE"
 
-# 生成 Conv2d 基准值
+GEMM_F32_BEFORE=$(stat -c %Y /workspace/operators/gemm_f32.csv)
+python test_gemm.py /workspace/operators/gemm_f32.csv 32 0 2>&1 | tee /workspace/logs/gemm_f32_baseline.log
+GEMM_F32_AFTER=$(stat -c %Y /workspace/operators/gemm_f32.csv)
+test "$GEMM_F32_AFTER" -gt "$GEMM_F32_BEFORE"
+
+# 生成 Conv2d 基准值，并证明两次 kernel 批量执行都刷新了 CSV
+CONV_F16_BEFORE=$(stat -c %Y /workspace/operators/conv_f16.csv)
 python test_conv.py /workspace/operators/conv_f16.csv 16 0 2>&1 | tee /workspace/logs/conv_f16_baseline.log
+CONV_F16_AFTER=$(stat -c %Y /workspace/operators/conv_f16.csv)
+test "$CONV_F16_AFTER" -gt "$CONV_F16_BEFORE"
+
+CONV_F32_BEFORE=$(stat -c %Y /workspace/operators/conv_f32.csv)
 python test_conv.py /workspace/operators/conv_f32.csv 32 0 2>&1 | tee /workspace/logs/conv_f32_baseline.log
+CONV_F32_AFTER=$(stat -c %Y /workspace/operators/conv_f32.csv)
+test "$CONV_F32_AFTER" -gt "$CONV_F32_BEFORE"
 ```
 
 参数说明：
@@ -257,14 +331,14 @@ python test_conv.py /workspace/operators/conv_f32.csv 32 0 2>&1 | tee /workspace
 - 第二个参数：`16` 表示 FP16，`32` 表示 FP32
 - 第三个参数：`0` 表示生成基准值模式
 
-**GEMM CSV 示例**（`gemm_f16.csv`）：
+**GEMM CSV 示例**（`gemm_f16.csv`，dtype 由文件名和 `test_gemm.py` 的参数确定）：
 
-| m | k | n | trans1 | trans2 | datatype | baseline | time | score |
-|---|---|------|--------|--------|----------|----------|------|-------|
-| 2048 | 1024 | 4096 | 0 | 0 | 16 | 0.123 | | |
-| 4096 | 2048 | 8192 | 0 | 0 | 16 | 0.456 | | |
-| 8192 | 4096 | 16384 | 0 | 0 | 16 | 1.234 | | |
-| 1024 | 1024 | 1024 | 1 | 0 | 16 | 0.089 | | |
+| NO | M | N | K | transA | transB | baseline | time | score |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 2048 | 4096 | 1024 | 0 | 0 | 0.123 | | |
+| 1 | 4096 | 8192 | 2048 | 0 | 0 | 0.456 | | |
+| 2 | 8192 | 16384 | 4096 | 0 | 0 | 1.234 | | |
+| 3 | 1024 | 1024 | 1024 | 1 | 0 | 0.089 | | |
 
 **Conv2d CSV 示例**（`conv_f16.csv`）：
 
@@ -406,35 +480,62 @@ test_transformer_decoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_siz
 
 请严格使用下列代码进行指标采集
 
-**GEMM / Conv2d 算子 — 从 CSV 文件全量采集**：
+**GEMM — 使用 Skill 的确定性 collector 生成 Result Contract 2.0**：
 
 ```bash
-python -c "
-import pandas as pd
-import json
+set -euo pipefail
+BENCHMARK_STARTED_AT=$(date +%s)
 
-result = {}
-for f in ['/workspace/operators/gemm_f16.csv', '/workspace/operators/gemm_f32.csv',
-          '/workspace/operators/conv_f16.csv', '/workspace/operators/conv_f32.csv']:
-    df = pd.read_csv(f)
-    if 'baseline' not in df.columns or df['baseline'].isna().all():
-        continue
-    key = f.split('/')[-1].replace('.csv', '')
-    # 区分数据类型
-    dtypes = {col: str(df[col].dtype) for col in df.columns}
-    # 提取 baseline 列
-    baseline_vals = df['baseline'].dropna().tolist()
-    result[key] = {
-        'dtypes': dtypes,
-        'baseline': baseline_vals,
-        'data': df.to_dict(orient='records')
-    }
+# 在这里完成前文的直接 nvcc 编译和两条 test_gemm.py 命令，并确认两份 CSV
+# 的 mtime 都晚于各自运行前的值。任一步失败时必须立即退出，禁止调用 collector。
 
-with open('/workspace/results/result.json', 'w') as fp:
-    json.dump(result, fp, indent=2, default=str)
-print('result.json written to /workspace/results/')
-"
+BENCHMARK_FINISHED_AT=$(date +%s)
+BENCHMARK_DURATION=$((BENCHMARK_FINISHED_AT - BENCHMARK_STARTED_AT))
+if [ "$BENCHMARK_DURATION" -le 0 ]; then BENCHMARK_DURATION=1; fi
+
+python3 /workspace/scripts/collect_cases.py \
+  --input-dir /workspace/operators \
+  --output /workspace/results/result.json \
+  --duration-seconds "$BENCHMARK_DURATION"
 ```
+
+GEMM 任务已绑定 `/workspace/benchmark_spec.yaml`。AIBenchAgent 会注入
+`AIBENCH_TASK_ID`、`AIBENCH_WORKLOAD_FINGERPRINT` 和 `AIBENCH_BENCHMARK_*` 身份变量。
+必须直接调用上述 collector；不要让临时生成的脚本自行解析 CSV、统计分位数、拼接
+`case_key` 或定义 JSON 字段。collector 会从同一批 cases 计算八个 summary metrics，先写
+`result.json.tmp` 再原子替换，并输出符合 Result Contract 2.0 的完整结果。
+
+生成的 shell 脚本必须以 `set -euo pipefail` 开头。所有经过 `tee` 的编译和执行命令
+必须受 `pipefail` 保护；不得用普通 `set -e` 掩盖管道左侧失败。只有直接 `nvcc` 编译
+成功、`build/gemm` 为可执行文件、FP16/FP32 两次 `test_gemm.py` 均成功且对应 CSV
+时间戳已更新后，才允许调用 collector 并报告 `status=success`。
+
+**Conv2d — 使用 Skill 的确定性 collector 生成 Result Contract 2.0**：
+
+```bash
+set -euo pipefail
+BENCHMARK_STARTED_AT=$(date +%s)
+
+# 在这里完成前文的直接 nvcc + cuDNN 编译和两条 test_conv.py 命令，并确认
+# 两份 CSV 的 mtime 都晚于各自运行前的值。任一步失败时必须立即退出，禁止调用 collector。
+
+BENCHMARK_FINISHED_AT=$(date +%s)
+BENCHMARK_DURATION=$((BENCHMARK_FINISHED_AT - BENCHMARK_STARTED_AT))
+if [ "$BENCHMARK_DURATION" -le 0 ]; then BENCHMARK_DURATION=1; fi
+
+python3 /workspace/scripts/collect_cases.py \
+  --benchmark conv \
+  --input-dir /workspace/operators \
+  --output /workspace/results/result.json \
+  --duration-seconds "$BENCHMARK_DURATION"
+```
+
+Conv2d 任务已绑定独立的 `/workspace/benchmark_spec.yaml`，其 case identity 包含
+dtype、batch、输入 H/W/C、输出通道、kernel、padding 和水平/垂直 stride。必须调用
+上述 collector 从本轮刚刷新的 `conv_f16.csv`、`conv_f32.csv` 生成 126 条 case；禁止
+自行汇总后只写 `metrics`，也禁止自行生成 `case_key`。只有新编译的 `build/conv` 为
+可执行文件、两次 `test_conv.py` 都成功且 CSV 时间戳均更新后，才允许报告
+`status=success`。
 
 **长尾算子 — 从输出 CSV 全量采集**：
 
