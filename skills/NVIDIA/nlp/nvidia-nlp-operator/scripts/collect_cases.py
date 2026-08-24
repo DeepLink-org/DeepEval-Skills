@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把 NVIDIA GEMM/Conv2d CSV 确定性转换为 Result Contract 2.0。"""
+"""把 NVIDIA GEMM/Conv2d/LongTail CSV 确定性转换为 Result Contract 2.0。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 
 def _required_env(name: str) -> str:
@@ -125,6 +125,83 @@ def _read_conv_cases(source: Path, dtype: str) -> List[Dict[str, object]]:
     return cases
 
 
+def _read_longtail_cases(
+    source: Path,
+    dtype: str,
+    expected_run_token: str,
+) -> List[Dict[str, object]]:
+    with source.open("r", encoding="utf-8-sig", newline="") as file_obj:
+        reader = csv.DictReader(file_obj)
+        required = {"NO", "op", "baseline", "time", "score", "aibench_run_token"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"{source}: missing columns: {', '.join(sorted(missing))}")
+
+        cases = []
+        seen_numbers = set()
+        seen_operators = set()
+        for line, row in enumerate(reader, start=2):
+            case_number = _integer(row, "NO", source, line, minimum=0)
+            operator = (row.get("op") or "").strip()
+            if not operator:
+                raise ValueError(f"{source}:{line}: op must be a non-empty string")
+            if row.get("aibench_run_token") != expected_run_token:
+                raise ValueError(
+                    f"{source}:{line}: result does not belong to the run-scoped case manifest"
+                )
+            if case_number in seen_numbers:
+                raise ValueError(f"{source}:{line}: duplicate NO: {case_number}")
+            if operator in seen_operators:
+                raise ValueError(f"{source}:{line}: duplicate op: {operator}")
+            seen_numbers.add(case_number)
+            seen_operators.add(operator)
+            cases.append(
+                {
+                    "dimensions": {"operator": operator, "dtype": dtype},
+                    "metrics": {"latency_ms": _latency(row, source, line)},
+                }
+            )
+    if not cases:
+        raise ValueError(f"{source}: no benchmark cases")
+    return cases
+
+
+def _read_longtail_manifest(source: Path) -> Tuple[List[str], str]:
+    with source.open("r", encoding="utf-8-sig", newline="") as file_obj:
+        reader = csv.DictReader(file_obj)
+        required = {"NO", "op", "baseline", "time", "score", "aibench_run_token"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"{source}: missing columns: {', '.join(sorted(missing))}")
+        operators = []
+        run_token = None
+        seen_numbers = set()
+        seen_operators = set()
+        for line, row in enumerate(reader, start=2):
+            case_number = _integer(row, "NO", source, line, minimum=0)
+            operator = (row.get("op") or "").strip()
+            if not operator:
+                raise ValueError(f"{source}:{line}: op must be a non-empty string")
+            row_run_token = (row.get("aibench_run_token") or "").strip()
+            if not row_run_token:
+                raise ValueError(f"{source}:{line}: aibench_run_token must be a non-empty string")
+            if run_token is None:
+                run_token = row_run_token
+            elif row_run_token != run_token:
+                raise ValueError(f"{source}:{line}: aibench_run_token must be consistent")
+            if case_number in seen_numbers:
+                raise ValueError(f"{source}:{line}: duplicate NO: {case_number}")
+            if operator in seen_operators:
+                raise ValueError(f"{source}:{line}: duplicate op: {operator}")
+            seen_numbers.add(case_number)
+            seen_operators.add(operator)
+            operators.append(operator)
+    if not operators:
+        raise ValueError(f"{source}: no benchmark cases")
+    assert run_token is not None
+    return operators, run_token
+
+
 def _percentile(values: List[float], quantile: float) -> float:
     ordered = sorted(values)
     position = (len(ordered) - 1) * quantile
@@ -149,17 +226,42 @@ def build_result(
         filenames = (("conv_f16.csv", "f16"), ("conv_f32.csv", "f32"))
         case_reader = _read_conv_cases
         metric_prefix = "conv"
+    elif benchmark == "longtail":
+        filenames = (
+            ("longtail_perf_gpu.csv", "f32"),
+            ("longtail_perf_gpu_fp16.csv", "f16"),
+        )
+        case_reader = _read_longtail_cases
+        metric_prefix = "longtail"
+        manifest_source = input_dir / "longtail_cases_input.csv"
+        if not manifest_source.is_file():
+            raise ValueError(f"missing longtail case manifest: {manifest_source}")
+        expected_longtail_identities, expected_longtail_run_token = _read_longtail_manifest(
+            manifest_source
+        )
     else:
         raise ValueError(f"unsupported benchmark: {benchmark}")
 
     cases = []
     sources = []
+    longtail_identities = []
     for filename, dtype in filenames:
         source = input_dir / filename
         if not source.is_file():
             raise ValueError(f"missing {benchmark} CSV: {source}")
         sources.append(filename)
-        cases.extend(case_reader(source, dtype))
+        if benchmark == "longtail":
+            source_cases = case_reader(source, dtype, expected_longtail_run_token)
+        else:
+            source_cases = case_reader(source, dtype)
+        cases.extend(source_cases)
+        if benchmark == "longtail":
+            longtail_identities.append([item["dimensions"]["operator"] for item in source_cases])
+
+    if benchmark == "longtail" and any(
+        identities != expected_longtail_identities for identities in longtail_identities
+    ):
+        raise ValueError("longtail f32 and f16 CSVs must match the run-scoped case manifest")
 
     latencies = [float(item["metrics"]["latency_ms"]) for item in cases]
     total = len(cases)
@@ -196,7 +298,7 @@ def build_result(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--benchmark", choices=("gemm", "conv"), default="gemm")
+    parser.add_argument("--benchmark", choices=("gemm", "conv", "longtail"), default="gemm")
     parser.add_argument("--input-dir", type=Path, default=Path("/workspace/operators"))
     parser.add_argument("--output", type=Path, default=Path("/workspace/results/result.json"))
     parser.add_argument("--duration-seconds", type=float, required=True)

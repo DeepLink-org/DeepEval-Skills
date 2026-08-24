@@ -5,6 +5,7 @@ metadata:
   benchmark_specs:
     gemm: benchmark_specs/gemm.yaml
     conv: benchmark_specs/conv.yaml
+    longtail: benchmark_specs/longtail.yaml
 ---
 
 ### 触发条件
@@ -372,10 +373,18 @@ export PYTHONPATH=$PWD:$PYTHONPATH
 ```bash
 cd /workspace/operators
 
+python3 /workspace/scripts/prepare_longtail_input.py \
+  --source /workspace/operators/longtail_perf.csv \
+  --output /workspace/results/longtail_cases_input.csv
+rm -f /workspace/results/longtail_perf_gpu.csv \
+  /workspace/results/longtail_perf_gpu.csv.tmp
 python ./LongTail-Bench/long_tail_bench/api/api.py \
-  -f /workspace/operators/longtail_perf.csv \
-  --outcsv /workspace/results/ltout_gpu.csv \
+  -f /workspace/results/longtail_cases_input.csv \
+  --outcsv /workspace/results/longtail_perf_gpu.csv.tmp \
   2>&1 | tee /workspace/logs/longtail_gpu_baseline.log
+test -s /workspace/results/longtail_perf_gpu.csv.tmp
+mv /workspace/results/longtail_perf_gpu.csv.tmp \
+  /workspace/results/longtail_perf_gpu.csv
 ```
 
 **GPU 基准 FP16**：
@@ -383,22 +392,25 @@ python ./LongTail-Bench/long_tail_bench/api/api.py \
 ```bash
 cd /workspace/operators
 
+rm -f /workspace/results/longtail_perf_gpu_fp16.csv \
+  /workspace/results/longtail_perf_gpu_fp16.csv.tmp
 python ./LongTail-Bench-fp16/long_tail_bench/api/api.py \
-  -f /workspace/operators/longtail_perf_gpu_fp16.csv \
-  --outcsv /workspace/results/ltout_fp16.csv \
+  -f /workspace/results/longtail_cases_input.csv \
+  --outcsv /workspace/results/longtail_perf_gpu_fp16.csv.tmp \
   2>&1 | tee /workspace/logs/longtail_gpu_baseline_fp16.log
+test -s /workspace/results/longtail_perf_gpu_fp16.csv.tmp
+mv /workspace/results/longtail_perf_gpu_fp16.csv.tmp \
+  /workspace/results/longtail_perf_gpu_fp16.csv
 ```
 
-**长尾算子 CSV 示例**（`longtail_perf.csv`）：
+**长尾算子 CSV 实际格式**（`longtail_perf_gpu.csv`）：
 
-| operator | input_shape | datatype | baseline | time | score |
-|----------|-------------|----------|----------|------|-------|
-| bbox2delta | (1024, 4) | fp32 | 0.012 | | |
-| nms | (1024, 4) | fp32 | 0.034 | | |
-| roi_align | (256, 256, 7, 7) | fp32 | 0.156 | | |
-| l2_loss | (1024, 512) | fp32 | 0.008 | | |
-| nms | (1024, 4) | fp16 | 0.022 | | |
-| roi_align | (256, 256, 7, 7) | fp16 | 0.098 | | |
+| NO | op | baseline | time | score | aibench_run_token |
+|----|----|----------|------|-------|-------------------|
+| 0 | bbox2delta | 0.256 | | | 本轮随机 token |
+| 1 | bbox_overlaps | 0.227 | | | 本轮随机 token |
+| 2 | delta2bbox | 0.545 | | | 本轮随机 token |
+| 3 | l2_loss | 0.031 | | | 本轮随机 token |
 
 ---
 
@@ -537,37 +549,42 @@ dtype、batch、输入 H/W/C、输出通道、kernel、padding 和水平/垂直 
 可执行文件、两次 `test_conv.py` 都成功且 CSV 时间戳均更新后，才允许报告
 `status=success`。
 
-**长尾算子 — 从输出 CSV 全量采集**：
+**长尾算子 — 使用 Skill 的确定性 collector 生成 Result Contract 2.0**：
 
 ```bash
-python -c "
-import pandas as pd
-import json
+set -euo pipefail
+BENCHMARK_STARTED_AT=$(date +%s)
 
-result = {}
-for csv_file in ['/workspace/results/ltout_gpu.csv', '/workspace/results/ltout_fp16.csv']:
-    try:
-        df = pd.read_csv(csv_file)
-    except FileNotFoundError:
-        continue
-    key = csv_file.split('/')[-1].replace('.csv', '')
-    # 区分数据类型
-    dtypes = {col: str(df[col].dtype) for col in df.columns}
-    # 提取 baseline 列（如存在），否则提取 time 列
-    metric_col = 'baseline' if 'baseline' in df.columns else ('time' if 'time' in df.columns else None)
-    metric_vals = df[metric_col].dropna().tolist() if metric_col else []
-    result[key] = {
-        'dtypes': dtypes,
-        'metric_col': metric_col,
-        'metric_values': metric_vals,
-        'data': df.to_dict(orient='records')
-    }
+# 在这里执行前文的 LongTail-Bench f32/f16 GPU 基准命令；两条命令必须成功生成
+# 对应的两份 CSV，任一失败时必须立即退出，禁止调用 collector。
+test -s /workspace/results/longtail_cases_input.csv
+test -s /workspace/results/longtail_perf_gpu.csv
+test -s /workspace/results/longtail_perf_gpu_fp16.csv
 
-with open('/workspace/results/result.json', 'w') as fp:
-    json.dump(result, fp, indent=2, default=str)
-print('result.json written to /workspace/results/')
-"
+BENCHMARK_FINISHED_AT=$(date +%s)
+BENCHMARK_DURATION=$((BENCHMARK_FINISHED_AT - BENCHMARK_STARTED_AT))
+if [ "$BENCHMARK_DURATION" -le 0 ]; then BENCHMARK_DURATION=1; fi
+
+python3 /workspace/scripts/collect_cases.py \
+  --benchmark longtail \
+  --input-dir /workspace/results \
+  --output /workspace/results/result.json \
+  --duration-seconds "$BENCHMARK_DURATION"
 ```
+
+长尾任务已绑定独立的 `/workspace/benchmark_spec.yaml`。必须调用上述 collector，禁止使用
+临时 Python/pandas 脚本自行生成 JSON。collector 严格读取实际产物的
+`NO,op,baseline,time,score,aibench_run_token` 六列，以 `op` 作为稳定 case identity、以
+`baseline` 生成
+`latency_ms`，并由文件名把两组 cases 规范化为 `f32`/`f16`。完整 case identity 是
+`operator + dtype`，所以同一算子跨 dtype 合法；每份文件内部仍拒绝缺列、空算子名、
+重复 `NO`、重复 `op` 以及非有限或负延迟。运行前必须先用
+`prepare_longtail_input.py` 从源 case 清单生成测量列为空且带随机 run token 的 run-scoped
+manifest；LongTail runner 会把 token 原样带入输出，collector 会逐行核对 token，并要求
+f32/f16 产物与 manifest 的算子集合和顺序完全一致，从而拒绝缺失算子或沿用旧 baseline。
+只有本轮两条 LongTail-Bench 命令都成功且
+`longtail_perf_gpu.csv`、`longtail_perf_gpu_fp16.csv` 均非空后，才允许调用 collector，
+生成 80 条 cases 并报告 `status=success`。
 
 **Transformer Block — 从日志采集**：
 
