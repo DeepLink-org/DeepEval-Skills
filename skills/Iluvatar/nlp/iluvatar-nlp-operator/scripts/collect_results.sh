@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
+
+# Usage: collect_results.sh [gemm|gemm-conv|longtail|all]
+TARGET="${1:-all}"
+require_choice TARGET "$TARGET" gemm gemm-conv longtail all
+prepare_operator_dirs
+
+python3 - "$TARGET" "$OPERATOR_RESULTS_DIR" "$OPERATOR_LOGS_DIR" <<'PY'
+import csv
+import json
+import math
+import re
+import sys
+from pathlib import Path
+
+target, results_dir, logs_dir = sys.argv[1:]
+results_dir = Path(results_dir)
+logs_dir = Path(logs_dir)
+result = {
+    "status": "success",
+    "backend": "CoreX-4.4.0/PyTorch-2.7.1",
+    "artifacts": {},
+    "errors": [],
+}
+
+names = []
+if target in {"gemm", "gemm-conv", "all"}:
+    names += ["gemm_fp16", "gemm_fp32"]
+if target in {"gemm-conv", "all"}:
+    names += ["conv_fp16", "conv_fp32"]
+if target in {"longtail", "all"}:
+    names += ["longtail_fp16", "longtail_fp32"]
+
+expected_rows = {
+    "gemm_fp16": 224,
+    "gemm_fp32": 224,
+    "conv_fp16": 63,
+    "conv_fp32": 63,
+    "longtail_fp16": 40,
+    "longtail_fp32": 40,
+}
+
+for name in names:
+    path = results_dir / f"{name}.csv"
+    if not path.is_file():
+        result["errors"].append(name)
+        continue
+
+    with path.open(newline="", encoding="utf-8-sig") as stream:
+        rows = list(csv.DictReader(stream))
+    numeric_columns = ["baseline"]
+    try:
+        numeric_valid = all(
+            all(math.isfinite(float(row[column])) for column in numeric_columns)
+            for row in rows
+        )
+    except (KeyError, TypeError, ValueError):
+        numeric_valid = False
+
+    valid = len(rows) == expected_rows[name] and numeric_valid
+    artifact = {"path": str(path), "rows": len(rows), "valid": valid}
+    if rows and numeric_valid:
+        artifact["mean_baseline"] = sum(float(row["baseline"]) for row in rows) / len(rows)
+    result["artifacts"][name] = artifact
+    if not valid:
+        result["errors"].append(name)
+
+if target == "all":
+    transformer_log = logs_dir / "transformer_block.log"
+    if transformer_log.is_file():
+        values = [
+            float(value)
+            for value in re.findall(
+                r"Time per iteration of (?:encoder|decoder):\s*([0-9.eE+-]+)",
+                transformer_log.read_text(errors="replace"),
+            )
+        ]
+    else:
+        values = []
+    valid = len(values) == 2 and all(math.isfinite(value) for value in values)
+    result["artifacts"]["transformer_block"] = {
+        "path": str(transformer_log),
+        "seconds_per_iteration": values,
+        "valid": valid,
+    }
+    if not valid:
+        result["errors"].append("transformer_block")
+
+if result["errors"]:
+    result["status"] = "failed"
+
+output = results_dir / "result.json"
+output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(json.dumps(result, ensure_ascii=False, indent=2))
+if result["errors"]:
+    raise SystemExit(1)
+PY
