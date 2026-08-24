@@ -1,6 +1,6 @@
 ---
 name: iluvatar-nlp-operator
-description: 天数智芯 BI-V150/CoreX GPU 上的 PyTorch 算子性能评测技能。支持 GEMM、Conv2d、长尾算子和 Transformer Block 的验证、日志记录与结果采集。
+description: 天数智芯 BI-V150 GPU 上的 PyTorch 算子性能评测技能。支持 GEMM、Conv2d、长尾算子和 Transformer Block 的验证、日志记录与结果采集。
 ---
 
 # iluvatar-nlp-operator
