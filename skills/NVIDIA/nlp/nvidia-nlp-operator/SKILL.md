@@ -1,6 +1,12 @@
 ---
 name: nvidia-nlp-operator
 description: NVIDIA GPU 上 CUDA 算子性能评测技能。支持 GEMM、Conv2d（FP16/FP32）、长尾算子、Transformer Block、通信算子等基准值生成与性能测试，用于指导 executor 完成容器启动、编译、基准值生成、测试验证与性能指标采集的完整流程。
+metadata:
+  benchmark_specs:
+    gemm: benchmark_specs/gemm.yaml
+    conv: benchmark_specs/conv.yaml
+    longtail: benchmark_specs/longtail.yaml
+    transformer_block: benchmark_specs/transformer_block.yaml
 ---
 
 ### 触发条件
@@ -79,7 +85,7 @@ description: NVIDIA GPU 上 CUDA 算子性能评测技能。支持 GEMM、Conv2d
 
 ### 支持的算子配置
 
-**当前支持算子**（共 4 类）：
+**当前支持算子**（共 5 类）：
 - **GEMM**: 矩阵乘法算子，支持 FP16（使用 tensor core）和 FP32，涵盖多种矩阵维度（M/N/K）和转置组合
 - **Conv2d**: 二维卷积算子，支持 FP16 和 FP32，涵盖多种输入尺寸、卷积核大小、padding、stride 组合
 - **长尾算子**: 基于 LongTail-Bench 的 PyTorch 实现，支持 GPU 和 CPU 模式，涵盖 bbox2delta、nms、l2_loss、roi_align 等 100+ 长尾算子
@@ -124,7 +130,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-operator:latest
 
 ```bash
 # 选择要测试的算子类型
-export OP_TYPE="gemm"  # 可选: gemm, conv, longtail, transformer, communication, all
+export OP_TYPE="gemm"  # 可选: gemm, conv, longtail, transformer_block, communication, all
 ```
 
 ### 容器创建命令
@@ -207,9 +213,64 @@ ls -lh /workspace/logs/
 
 #### 步骤 1：编译
 
+GEMM 必须直接使用 `nvcc` 编译。不要运行本项目的顶层 CMake：该 CMake 同时配置
+Conv2d 并强制查找 cuDNN，而 GEMM 镜像不保证包含 cuDNN，CMake 失败后继续使用旧
+CSV 会产生“评测成功但没有执行 kernel”的假阳性。
+
 ```bash
+set -euo pipefail
+
 cd /workspace/operators/cuda_ops
-mkdir -p build && cd build && cmake .. && make 2>&1 | tee /workspace/logs/compile.log
+mkdir -p build
+rm -f build/gemm
+nvcc -O3 -lcublas -o build/gemm cuda_gemm.cpp \
+  2>&1 | tee /workspace/logs/compile_gemm.log
+test -x build/gemm
+```
+
+Conv2d 同样必须直接使用 `nvcc` 重新编译，不得复用旧的 `build/conv`。当前镜像的
+cuDNN 可能来自 `nvidia.cudnn` Python 包，只有带版本号的 `libcudnn.so.*` 而没有
+`libcudnn.so` 链接；因此必须解析实际头文件和动态库文件，并使用
+`-l:<实际文件名>` 链接。禁止仅使用 `-lcudnn` 后在链接失败时继续执行旧二进制。
+
+```bash
+set -euo pipefail
+
+cd /workspace/operators/cuda_ops
+mkdir -p build
+rm -f build/conv
+
+CUDNN_PACKAGE_ROOT=$(python3 - <<'PY'
+from pathlib import Path
+import nvidia.cudnn
+
+print(Path(nvidia.cudnn.__file__).resolve().parent)
+PY
+)
+CUDNN_INCLUDE_DIR="$CUDNN_PACKAGE_ROOT/include"
+CUDNN_LIB_DIR="$CUDNN_PACKAGE_ROOT/lib"
+CUDNN_LIB_FILE=$(python3 - "$CUDNN_LIB_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+library_dir = Path(sys.argv[1])
+candidates = sorted(library_dir.glob("libcudnn.so*"))
+if not candidates:
+    raise SystemExit(f"libcudnn.so* not found in {library_dir}")
+print(candidates[0])
+PY
+)
+
+test -f "$CUDNN_INCLUDE_DIR/cudnn.h"
+test -f "$CUDNN_LIB_FILE"
+nvcc -O3 \
+  -I"$CUDNN_INCLUDE_DIR" \
+  -L"$CUDNN_LIB_DIR" \
+  -l:"$(basename "$CUDNN_LIB_FILE")" \
+  -Xlinker -rpath -Xlinker "$CUDNN_LIB_DIR" \
+  -o build/conv cudnn_convforward.cpp \
+  2>&1 | tee /workspace/logs/compile_conv.log
+test -x build/conv
 ```
 
 **验证编译产物**：
@@ -241,15 +302,30 @@ cd /workspace/operators/cuda_ops
 **批量运行**（推荐）：
 
 ```bash
+set -euo pipefail
 cd /workspace/operators
 
 # 生成 GEMM 基准值
+GEMM_F16_BEFORE=$(stat -c %Y /workspace/operators/gemm_f16.csv)
 python test_gemm.py /workspace/operators/gemm_f16.csv 16 0 2>&1 | tee /workspace/logs/gemm_f16_baseline.log
-python test_gemm.py /workspace/operators/gemm_f32.csv 32 0 2>&1 | tee /workspace/logs/gemm_f32_baseline.log
+GEMM_F16_AFTER=$(stat -c %Y /workspace/operators/gemm_f16.csv)
+test "$GEMM_F16_AFTER" -gt "$GEMM_F16_BEFORE"
 
-# 生成 Conv2d 基准值
+GEMM_F32_BEFORE=$(stat -c %Y /workspace/operators/gemm_f32.csv)
+python test_gemm.py /workspace/operators/gemm_f32.csv 32 0 2>&1 | tee /workspace/logs/gemm_f32_baseline.log
+GEMM_F32_AFTER=$(stat -c %Y /workspace/operators/gemm_f32.csv)
+test "$GEMM_F32_AFTER" -gt "$GEMM_F32_BEFORE"
+
+# 生成 Conv2d 基准值，并证明两次 kernel 批量执行都刷新了 CSV
+CONV_F16_BEFORE=$(stat -c %Y /workspace/operators/conv_f16.csv)
 python test_conv.py /workspace/operators/conv_f16.csv 16 0 2>&1 | tee /workspace/logs/conv_f16_baseline.log
+CONV_F16_AFTER=$(stat -c %Y /workspace/operators/conv_f16.csv)
+test "$CONV_F16_AFTER" -gt "$CONV_F16_BEFORE"
+
+CONV_F32_BEFORE=$(stat -c %Y /workspace/operators/conv_f32.csv)
 python test_conv.py /workspace/operators/conv_f32.csv 32 0 2>&1 | tee /workspace/logs/conv_f32_baseline.log
+CONV_F32_AFTER=$(stat -c %Y /workspace/operators/conv_f32.csv)
+test "$CONV_F32_AFTER" -gt "$CONV_F32_BEFORE"
 ```
 
 参数说明：
@@ -257,14 +333,14 @@ python test_conv.py /workspace/operators/conv_f32.csv 32 0 2>&1 | tee /workspace
 - 第二个参数：`16` 表示 FP16，`32` 表示 FP32
 - 第三个参数：`0` 表示生成基准值模式
 
-**GEMM CSV 示例**（`gemm_f16.csv`）：
+**GEMM CSV 示例**（`gemm_f16.csv`，dtype 由文件名和 `test_gemm.py` 的参数确定）：
 
-| m | k | n | trans1 | trans2 | datatype | baseline | time | score |
-|---|---|------|--------|--------|----------|----------|------|-------|
-| 2048 | 1024 | 4096 | 0 | 0 | 16 | 0.123 | | |
-| 4096 | 2048 | 8192 | 0 | 0 | 16 | 0.456 | | |
-| 8192 | 4096 | 16384 | 0 | 0 | 16 | 1.234 | | |
-| 1024 | 1024 | 1024 | 1 | 0 | 16 | 0.089 | | |
+| NO | M | N | K | transA | transB | baseline | time | score |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 2048 | 4096 | 1024 | 0 | 0 | 0.123 | | |
+| 1 | 4096 | 8192 | 2048 | 0 | 0 | 0.456 | | |
+| 2 | 8192 | 16384 | 4096 | 0 | 0 | 1.234 | | |
+| 3 | 1024 | 1024 | 1024 | 1 | 0 | 0.089 | | |
 
 **Conv2d CSV 示例**（`conv_f16.csv`）：
 
@@ -284,11 +360,15 @@ head -5 /workspace/operators/gemm_f16.csv
 
 ### 长尾算子
 
-#### 步骤 1：环境准备
+#### 步骤 1：准备本轮输入
 
 ```bash
-cd /workspace/operators/LongTail-Bench
-export PYTHONPATH=$PWD:$PYTHONPATH
+set -euo pipefail
+
+python3 /workspace/scripts/prepare_longtail_input.py \
+  --source /workspace/operators/longtail_perf.csv \
+  --output /workspace/results/longtail_cases_input.csv
+test -s /workspace/results/longtail_cases_input.csv
 ```
 
 #### 步骤 2：生成基准值
@@ -296,60 +376,64 @@ export PYTHONPATH=$PWD:$PYTHONPATH
 **GPU 基准**：
 
 ```bash
-cd /workspace/operators
-
-python ./LongTail-Bench/long_tail_bench/api/api.py \
-  -f /workspace/operators/longtail_perf.csv \
-  --outcsv /workspace/results/ltout_gpu.csv \
-  2>&1 | tee /workspace/logs/longtail_gpu_baseline.log
+python3 /workspace/scripts/run_longtail.py \
+  --manifest /workspace/results/longtail_cases_input.csv \
+  --f32-project-root /workspace/operators/LongTail-Bench \
+  --f16-project-root /workspace/operators/LongTail-Bench-fp16 \
+  --output-dir /workspace/results \
+  --log-dir /workspace/logs
 ```
 
-**GPU 基准 FP16**：
+**长尾算子 CSV 实际格式**（`longtail_perf_gpu.csv`）：
 
-```bash
-cd /workspace/operators
-
-python ./LongTail-Bench-fp16/long_tail_bench/api/api.py \
-  -f /workspace/operators/longtail_perf_gpu_fp16.csv \
-  --outcsv /workspace/results/ltout_fp16.csv \
-  2>&1 | tee /workspace/logs/longtail_gpu_baseline_fp16.log
-```
-
-**长尾算子 CSV 示例**（`longtail_perf.csv`）：
-
-| operator | input_shape | datatype | baseline | time | score |
-|----------|-------------|----------|----------|------|-------|
-| bbox2delta | (1024, 4) | fp32 | 0.012 | | |
-| nms | (1024, 4) | fp32 | 0.034 | | |
-| roi_align | (256, 256, 7, 7) | fp32 | 0.156 | | |
-| l2_loss | (1024, 512) | fp32 | 0.008 | | |
-| nms | (1024, 4) | fp16 | 0.022 | | |
-| roi_align | (256, 256, 7, 7) | fp16 | 0.098 | | |
+| NO | op | baseline | time | score | aibench_run_token |
+|----|----|----------|------|-------|-------------------|
+| 0 | bbox2delta | 0.256 | | | 本轮随机 token |
+| 1 | bbox_overlaps | 0.227 | | | 本轮随机 token |
+| 2 | delta2bbox | 0.545 | | | 本轮随机 token |
+| 3 | l2_loss | 0.031 | | | 本轮随机 token |
 
 ---
 
 ### Transformer Block
 
-Transformer Block 测试基于 PyTorch 实现，评估 Encoder Layer 和 Decoder Layer 的推理耗时。
+Transformer Block 测试基于项目中的 PyTorch EncoderLayer/DecoderLayer 实现，评估
+FP32 inference 延迟。必须使用 Skill 预置的确定性 runner；不要直接执行项目原有的
+`test.py`，因为该文件使用 `.train()` 且没有在计时边界执行 CUDA synchronize，不符合本
+BenchmarkSpec 的 inference 和 GPU 延迟语义。
 
 ```bash
-cd /workspace/operators/transformer_block
+set -euo pipefail
+BENCHMARK_STARTED_AT=$(date +%s)
 
-python test.py 2>&1 | tee /workspace/logs/transformer_block.log
+rm -f /workspace/results/transformer_block_cases.csv \
+  /workspace/results/transformer_block_cases.csv.tmp
+python3 /workspace/scripts/run_transformer_block.py \
+  --project-root /workspace/operators/transformer_block \
+  --output /workspace/results/transformer_block_cases.csv \
+  --d-model 512 \
+  --num-heads 8 \
+  --ffn-hidden-size 2048 \
+  --batch-size 32 \
+  --sequence-length 512 \
+  --warmup-iterations 20 \
+  --measurement-iterations 1000 \
+  2>&1 | tee /workspace/logs/transformer_block.log
+test -s /workspace/results/transformer_block_cases.csv
 ```
 
 **测试内容**：
-- Encoder Layer：测试 self-attention + FFN 前向传播耗时
-- Decoder Layer：测试 self-attention + cross-attention + FFN 前向传播耗时
-- 默认参数：d_model=512, n_head=8, ffn_hidden=2048, batch_size=32, seq_len=512
+- Encoder Layer：self-attention + FFN inference 延迟
+- Decoder Layer：self-attention + cross-attention + FFN inference 延迟
+- FP32、`eval()`、`torch.inference_mode()`
+- warmup 后在 CUDA synchronize 边界内测量 1000 次迭代的平均延迟
+- 默认参数：d_model=512、num_heads=8、ffn_hidden_size=2048、batch_size=32、
+  query/key-value sequence length=512
 
-**自定义参数**（可选）：
-编辑 `test.py` 末尾的调用参数：
-```python
-# 修改以下参数进行自定义测试
-test_transformer_encoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_size=32, seq_len=512, num_iterations=1000)
-test_transformer_decoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_size=32, tgt_len=512, memory_len=512, num_iterations=1000)
-```
+runner 会原子写入 `/workspace/results/transformer_block_cases.csv`，包含 encoder 和 decoder
+各一条测量，并携带本次 `AIBENCH_WORKLOAD_FINGERPRINT`。不要修改项目 `test.py` 的末尾参数
+来生成另一套未进入 case identity 的结果；如需改变参数，必须通过 runner 的显式 CLI 参数，
+实际参数会进入 CSV、case dimensions 和 `case_key`。
 
 ---
 
@@ -391,7 +475,7 @@ test_transformer_decoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_siz
 
 | 类型 | 指标 | 说明 |
 |------|------|------|
-| 性能（必采） | `Time per iteration` | Encoder/Decoder Layer 单次迭代平均耗时（秒） |
+| 性能（必采） | `latency_ms` | Encoder/Decoder Layer 单次 inference 平均耗时（毫秒），越低越好 |
 
 #### 通信算子
 
@@ -406,73 +490,134 @@ test_transformer_decoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_siz
 
 请严格使用下列代码进行指标采集
 
-**GEMM / Conv2d 算子 — 从 CSV 文件全量采集**：
+**GEMM — 使用 Skill 的确定性 collector 生成 Result Contract 2.0**：
 
 ```bash
-python -c "
-import pandas as pd
-import json
+set -euo pipefail
+BENCHMARK_STARTED_AT=$(date +%s)
 
-result = {}
-for f in ['/workspace/operators/gemm_f16.csv', '/workspace/operators/gemm_f32.csv',
-          '/workspace/operators/conv_f16.csv', '/workspace/operators/conv_f32.csv']:
-    df = pd.read_csv(f)
-    if 'baseline' not in df.columns or df['baseline'].isna().all():
-        continue
-    key = f.split('/')[-1].replace('.csv', '')
-    # 区分数据类型
-    dtypes = {col: str(df[col].dtype) for col in df.columns}
-    # 提取 baseline 列
-    baseline_vals = df['baseline'].dropna().tolist()
-    result[key] = {
-        'dtypes': dtypes,
-        'baseline': baseline_vals,
-        'data': df.to_dict(orient='records')
-    }
+# 在这里完成前文的直接 nvcc 编译和两条 test_gemm.py 命令，并确认两份 CSV
+# 的 mtime 都晚于各自运行前的值。任一步失败时必须立即退出，禁止调用 collector。
 
-with open('/workspace/results/result.json', 'w') as fp:
-    json.dump(result, fp, indent=2, default=str)
-print('result.json written to /workspace/results/')
-"
+BENCHMARK_FINISHED_AT=$(date +%s)
+BENCHMARK_DURATION=$((BENCHMARK_FINISHED_AT - BENCHMARK_STARTED_AT))
+if [ "$BENCHMARK_DURATION" -le 0 ]; then BENCHMARK_DURATION=1; fi
+
+python3 /workspace/scripts/collect_cases.py \
+  --input-dir /workspace/operators \
+  --output /workspace/results/result.json \
+  --duration-seconds "$BENCHMARK_DURATION"
 ```
 
-**长尾算子 — 从输出 CSV 全量采集**：
+GEMM 任务已绑定 `/workspace/benchmark_spec.yaml`。AIBenchAgent 会注入
+`AIBENCH_TASK_ID`、`AIBENCH_WORKLOAD_FINGERPRINT` 和 `AIBENCH_BENCHMARK_*` 身份变量。
+必须直接调用上述 collector；不要让临时生成的脚本自行解析 CSV、统计分位数、拼接
+`case_key` 或定义 JSON 字段。collector 会从同一批 cases 计算八个 summary metrics，先写
+`result.json.tmp` 再原子替换，并输出符合 Result Contract 2.0 的完整结果。
+
+生成的 shell 脚本必须以 `set -euo pipefail` 开头。所有经过 `tee` 的编译和执行命令
+必须受 `pipefail` 保护；不得用普通 `set -e` 掩盖管道左侧失败。只有直接 `nvcc` 编译
+成功、`build/gemm` 为可执行文件、FP16/FP32 两次 `test_gemm.py` 均成功且对应 CSV
+时间戳已更新后，才允许调用 collector 并报告 `status=success`。
+
+**Conv2d — 使用 Skill 的确定性 collector 生成 Result Contract 2.0**：
 
 ```bash
-python -c "
-import pandas as pd
-import json
+set -euo pipefail
+BENCHMARK_STARTED_AT=$(date +%s)
 
-result = {}
-for csv_file in ['/workspace/results/ltout_gpu.csv', '/workspace/results/ltout_fp16.csv']:
-    try:
-        df = pd.read_csv(csv_file)
-    except FileNotFoundError:
-        continue
-    key = csv_file.split('/')[-1].replace('.csv', '')
-    # 区分数据类型
-    dtypes = {col: str(df[col].dtype) for col in df.columns}
-    # 提取 baseline 列（如存在），否则提取 time 列
-    metric_col = 'baseline' if 'baseline' in df.columns else ('time' if 'time' in df.columns else None)
-    metric_vals = df[metric_col].dropna().tolist() if metric_col else []
-    result[key] = {
-        'dtypes': dtypes,
-        'metric_col': metric_col,
-        'metric_values': metric_vals,
-        'data': df.to_dict(orient='records')
-    }
+# 在这里完成前文的直接 nvcc + cuDNN 编译和两条 test_conv.py 命令，并确认
+# 两份 CSV 的 mtime 都晚于各自运行前的值。任一步失败时必须立即退出，禁止调用 collector。
 
-with open('/workspace/results/result.json', 'w') as fp:
-    json.dump(result, fp, indent=2, default=str)
-print('result.json written to /workspace/results/')
-"
+BENCHMARK_FINISHED_AT=$(date +%s)
+BENCHMARK_DURATION=$((BENCHMARK_FINISHED_AT - BENCHMARK_STARTED_AT))
+if [ "$BENCHMARK_DURATION" -le 0 ]; then BENCHMARK_DURATION=1; fi
+
+python3 /workspace/scripts/collect_cases.py \
+  --benchmark conv \
+  --input-dir /workspace/operators \
+  --output /workspace/results/result.json \
+  --duration-seconds "$BENCHMARK_DURATION"
 ```
 
-**Transformer Block — 从日志采集**：
+Conv2d 任务已绑定独立的 `/workspace/benchmark_spec.yaml`，其 case identity 包含
+dtype、batch、输入 H/W/C、输出通道、kernel、padding 和水平/垂直 stride。必须调用
+上述 collector 从本轮刚刷新的 `conv_f16.csv`、`conv_f32.csv` 生成 126 条 case；禁止
+自行汇总后只写 `metrics`，也禁止自行生成 `case_key`。只有新编译的 `build/conv` 为
+可执行文件、两次 `test_conv.py` 都成功且 CSV 时间戳均更新后，才允许报告
+`status=success`。
+
+**长尾算子 — 使用 Skill 的确定性 collector 生成 Result Contract 2.0**：
 
 ```bash
-grep "Time per iteration" /workspace/logs/transformer_block.log
+set -euo pipefail
+BENCHMARK_STARTED_AT=$(date +%s)
+
+# 在这里执行前文的 LongTail-Bench f32/f16 GPU 基准命令；两条命令必须成功生成
+# 对应的两份 CSV，任一失败时必须立即退出，禁止调用 collector。
+test -s /workspace/results/longtail_cases_input.csv
+test -s /workspace/results/longtail_perf_gpu.csv
+test -s /workspace/results/longtail_perf_gpu_fp16.csv
+
+BENCHMARK_FINISHED_AT=$(date +%s)
+BENCHMARK_DURATION=$((BENCHMARK_FINISHED_AT - BENCHMARK_STARTED_AT))
+if [ "$BENCHMARK_DURATION" -le 0 ]; then BENCHMARK_DURATION=1; fi
+
+python3 /workspace/scripts/collect_cases.py \
+  --benchmark longtail \
+  --input-dir /workspace/results \
+  --output /workspace/results/result.json \
+  --duration-seconds "$BENCHMARK_DURATION"
 ```
+
+长尾任务已绑定独立的 `/workspace/benchmark_spec.yaml`。必须调用上述 collector，禁止使用
+临时 Python/pandas 脚本自行生成 JSON。collector 严格读取实际产物的
+`NO,op,baseline,time,score,aibench_run_token` 六列，以 `op` 作为稳定 case identity、以
+`baseline` 生成
+`latency_ms`，并由文件名把两组 cases 规范化为 `f32`/`f16`。完整 case identity 是
+`operator + dtype`，所以同一算子跨 dtype 合法；每份文件内部仍拒绝缺列、空算子名、
+重复 `NO`、重复 `op` 以及非有限或负延迟。运行前必须先用
+`prepare_longtail_input.py` 从源 case 清单生成测量列为空且带随机 run token 的 run-scoped
+manifest；LongTail runner 会把 token 原样带入输出，collector 会逐行核对 token，并要求
+f32/f16 产物与 manifest 的算子集合和顺序完全一致，从而拒绝缺失算子或沿用旧 baseline。
+LongTail-Bench 的 Engine 把原始 JSON 写入项目根目录的 `results/torch.json`，而 `api.py`
+也按当前工作目录读取该相对路径。必须直接调用上述 `run_longtail.py`：runner 会把 f32/f16
+进程的工作目录分别固定为 `/workspace/operators/LongTail-Bench` 和
+`/workspace/operators/LongTail-Bench-fp16`，并在每次运行前删除对应项目中的旧
+`results/torch.json`，防止失败 case 复用历史结果。禁止让临时生成的脚本从
+`/workspace/operators` 直接调用两份 `api.py`，也不能只创建
+`/workspace/operators/results` 规避错误。
+只有本轮两条 LongTail-Bench 命令都成功且
+`longtail_perf_gpu.csv`、`longtail_perf_gpu_fp16.csv` 均非空后，才允许调用 collector，
+生成 80 条 cases 并报告 `status=success`。
+
+**Transformer Block — 使用 Skill 的确定性 runner 和 collector 生成 Result Contract 2.0**：
+
+```bash
+set -euo pipefail
+
+# 在这里完成前文的 run_transformer_block.py 命令。runner 失败时必须立即退出，
+# 禁止从旧日志或旧 CSV 调用 collector。
+test -s /workspace/results/transformer_block_cases.csv
+
+BENCHMARK_FINISHED_AT=$(date +%s)
+BENCHMARK_DURATION=$((BENCHMARK_FINISHED_AT - BENCHMARK_STARTED_AT))
+if [ "$BENCHMARK_DURATION" -le 0 ]; then BENCHMARK_DURATION=1; fi
+
+python3 /workspace/scripts/collect_cases.py \
+  --benchmark transformer_block \
+  --input-dir /workspace/results \
+  --output /workspace/results/result.json \
+  --duration-seconds "$BENCHMARK_DURATION"
+```
+
+Transformer Block 任务已绑定独立的 `/workspace/benchmark_spec.yaml`，必须直接调用上述
+runner 和 collector。AIBenchAgent 会注入 `AIBENCH_TASK_ID`、
+`AIBENCH_WORKLOAD_FINGERPRINT` 和 `AIBENCH_BENCHMARK_*` 身份变量。runner 负责正确的
+inference 模式、CUDA 同步计时和原子 CSV 输出；collector 负责核对本轮 workload
+fingerprint、encoder/decoder 完整性、参数和有限延迟，再生成 2 条 cases、八个 summary
+metrics 以及符合 Result Contract 2.0 的 `result.json`。禁止由临时生成脚本解析日志、拼接
+`case_key` 或自定义 JSON 字段。
 
 ---
 
