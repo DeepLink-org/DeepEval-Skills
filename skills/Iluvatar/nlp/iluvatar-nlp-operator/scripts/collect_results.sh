@@ -71,16 +71,21 @@ for name in names:
 
 if target == "all":
     transformer_log = logs_dir / "transformer_block.log"
+    values = []
     if transformer_log.is_file():
-        values = [
-            float(value)
-            for value in re.findall(
-                r"Time per iteration of (?:encoder|decoder):\s*([0-9.eE+-]+)",
-                transformer_log.read_text(errors="replace"),
+        text = transformer_log.read_text(errors="replace")
+        for name in ("encoder", "decoder"):
+            match = re.search(
+                rf"AIBENCH_TRANSFORMER_{name.upper()}_SECONDS=([0-9.eE+-]+)", text
             )
-        ]
-    else:
-        values = []
+            if not match:
+                match = re.search(
+                    rf"time\s+per\s+iteration\s+of\s+{name}\s*:\s*([0-9.eE+-]+)",
+                    text,
+                    re.IGNORECASE,
+                )
+            if match:
+                values.append(float(match.group(1)))
     valid = len(values) == 2 and all(math.isfinite(value) for value in values)
     result["artifacts"]["transformer_block"] = {
         "path": str(transformer_log),
