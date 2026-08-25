@@ -6,6 +6,7 @@ metadata:
     gemm: benchmark_specs/gemm.yaml
     conv: benchmark_specs/conv.yaml
     longtail: benchmark_specs/longtail.yaml
+    transformer_block: benchmark_specs/transformer_block.yaml
 ---
 
 ### 触发条件
@@ -84,7 +85,7 @@ metadata:
 
 ### 支持的算子配置
 
-**当前支持算子**（共 4 类）：
+**当前支持算子**（共 5 类）：
 - **GEMM**: 矩阵乘法算子，支持 FP16（使用 tensor core）和 FP32，涵盖多种矩阵维度（M/N/K）和转置组合
 - **Conv2d**: 二维卷积算子，支持 FP16 和 FP32，涵盖多种输入尺寸、卷积核大小、padding、stride 组合
 - **长尾算子**: 基于 LongTail-Bench 的 PyTorch 实现，支持 GPU 和 CPU 模式，涵盖 bbox2delta、nms、l2_loss、roi_align 等 100+ 长尾算子
@@ -129,7 +130,7 @@ swr.cn-north-1.myhuaweicloud.com/deeplink/nvidia-nlp-operator:latest
 
 ```bash
 # 选择要测试的算子类型
-export OP_TYPE="gemm"  # 可选: gemm, conv, longtail, transformer, communication, all
+export OP_TYPE="gemm"  # 可选: gemm, conv, longtail, transformer_block, communication, all
 ```
 
 ### 容器创建命令
@@ -359,11 +360,15 @@ head -5 /workspace/operators/gemm_f16.csv
 
 ### 长尾算子
 
-#### 步骤 1：环境准备
+#### 步骤 1：准备本轮输入
 
 ```bash
-cd /workspace/operators/LongTail-Bench
-export PYTHONPATH=$PWD:$PYTHONPATH
+set -euo pipefail
+
+python3 /workspace/scripts/prepare_longtail_input.py \
+  --source /workspace/operators/longtail_perf.csv \
+  --output /workspace/results/longtail_cases_input.csv
+test -s /workspace/results/longtail_cases_input.csv
 ```
 
 #### 步骤 2：生成基准值
@@ -371,36 +376,12 @@ export PYTHONPATH=$PWD:$PYTHONPATH
 **GPU 基准**：
 
 ```bash
-cd /workspace/operators
-
-python3 /workspace/scripts/prepare_longtail_input.py \
-  --source /workspace/operators/longtail_perf.csv \
-  --output /workspace/results/longtail_cases_input.csv
-rm -f /workspace/results/longtail_perf_gpu.csv \
-  /workspace/results/longtail_perf_gpu.csv.tmp
-python ./LongTail-Bench/long_tail_bench/api/api.py \
-  -f /workspace/results/longtail_cases_input.csv \
-  --outcsv /workspace/results/longtail_perf_gpu.csv.tmp \
-  2>&1 | tee /workspace/logs/longtail_gpu_baseline.log
-test -s /workspace/results/longtail_perf_gpu.csv.tmp
-mv /workspace/results/longtail_perf_gpu.csv.tmp \
-  /workspace/results/longtail_perf_gpu.csv
-```
-
-**GPU 基准 FP16**：
-
-```bash
-cd /workspace/operators
-
-rm -f /workspace/results/longtail_perf_gpu_fp16.csv \
-  /workspace/results/longtail_perf_gpu_fp16.csv.tmp
-python ./LongTail-Bench-fp16/long_tail_bench/api/api.py \
-  -f /workspace/results/longtail_cases_input.csv \
-  --outcsv /workspace/results/longtail_perf_gpu_fp16.csv.tmp \
-  2>&1 | tee /workspace/logs/longtail_gpu_baseline_fp16.log
-test -s /workspace/results/longtail_perf_gpu_fp16.csv.tmp
-mv /workspace/results/longtail_perf_gpu_fp16.csv.tmp \
-  /workspace/results/longtail_perf_gpu_fp16.csv
+python3 /workspace/scripts/run_longtail.py \
+  --manifest /workspace/results/longtail_cases_input.csv \
+  --f32-project-root /workspace/operators/LongTail-Bench \
+  --f16-project-root /workspace/operators/LongTail-Bench-fp16 \
+  --output-dir /workspace/results \
+  --log-dir /workspace/logs
 ```
 
 **长尾算子 CSV 实际格式**（`longtail_perf_gpu.csv`）：
@@ -416,26 +397,43 @@ mv /workspace/results/longtail_perf_gpu_fp16.csv.tmp \
 
 ### Transformer Block
 
-Transformer Block 测试基于 PyTorch 实现，评估 Encoder Layer 和 Decoder Layer 的推理耗时。
+Transformer Block 测试基于项目中的 PyTorch EncoderLayer/DecoderLayer 实现，评估
+FP32 inference 延迟。必须使用 Skill 预置的确定性 runner；不要直接执行项目原有的
+`test.py`，因为该文件使用 `.train()` 且没有在计时边界执行 CUDA synchronize，不符合本
+BenchmarkSpec 的 inference 和 GPU 延迟语义。
 
 ```bash
-cd /workspace/operators/transformer_block
+set -euo pipefail
+BENCHMARK_STARTED_AT=$(date +%s)
 
-python test.py 2>&1 | tee /workspace/logs/transformer_block.log
+rm -f /workspace/results/transformer_block_cases.csv \
+  /workspace/results/transformer_block_cases.csv.tmp
+python3 /workspace/scripts/run_transformer_block.py \
+  --project-root /workspace/operators/transformer_block \
+  --output /workspace/results/transformer_block_cases.csv \
+  --d-model 512 \
+  --num-heads 8 \
+  --ffn-hidden-size 2048 \
+  --batch-size 32 \
+  --sequence-length 512 \
+  --warmup-iterations 20 \
+  --measurement-iterations 1000 \
+  2>&1 | tee /workspace/logs/transformer_block.log
+test -s /workspace/results/transformer_block_cases.csv
 ```
 
 **测试内容**：
-- Encoder Layer：测试 self-attention + FFN 前向传播耗时
-- Decoder Layer：测试 self-attention + cross-attention + FFN 前向传播耗时
-- 默认参数：d_model=512, n_head=8, ffn_hidden=2048, batch_size=32, seq_len=512
+- Encoder Layer：self-attention + FFN inference 延迟
+- Decoder Layer：self-attention + cross-attention + FFN inference 延迟
+- FP32、`eval()`、`torch.inference_mode()`
+- warmup 后在 CUDA synchronize 边界内测量 1000 次迭代的平均延迟
+- 默认参数：d_model=512、num_heads=8、ffn_hidden_size=2048、batch_size=32、
+  query/key-value sequence length=512
 
-**自定义参数**（可选）：
-编辑 `test.py` 末尾的调用参数：
-```python
-# 修改以下参数进行自定义测试
-test_transformer_encoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_size=32, seq_len=512, num_iterations=1000)
-test_transformer_decoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_size=32, tgt_len=512, memory_len=512, num_iterations=1000)
-```
+runner 会原子写入 `/workspace/results/transformer_block_cases.csv`，包含 encoder 和 decoder
+各一条测量，并携带本次 `AIBENCH_WORKLOAD_FINGERPRINT`。不要修改项目 `test.py` 的末尾参数
+来生成另一套未进入 case identity 的结果；如需改变参数，必须通过 runner 的显式 CLI 参数，
+实际参数会进入 CSV、case dimensions 和 `case_key`。
 
 ---
 
@@ -477,7 +475,7 @@ test_transformer_decoder_block(d_model=512, n_head=8, ffn_hidden=2048, batch_siz
 
 | 类型 | 指标 | 说明 |
 |------|------|------|
-| 性能（必采） | `Time per iteration` | Encoder/Decoder Layer 单次迭代平均耗时（秒） |
+| 性能（必采） | `latency_ms` | Encoder/Decoder Layer 单次 inference 平均耗时（毫秒），越低越好 |
 
 #### 通信算子
 
@@ -582,15 +580,44 @@ python3 /workspace/scripts/collect_cases.py \
 `prepare_longtail_input.py` 从源 case 清单生成测量列为空且带随机 run token 的 run-scoped
 manifest；LongTail runner 会把 token 原样带入输出，collector 会逐行核对 token，并要求
 f32/f16 产物与 manifest 的算子集合和顺序完全一致，从而拒绝缺失算子或沿用旧 baseline。
+LongTail-Bench 的 Engine 把原始 JSON 写入项目根目录的 `results/torch.json`，而 `api.py`
+也按当前工作目录读取该相对路径。必须直接调用上述 `run_longtail.py`：runner 会把 f32/f16
+进程的工作目录分别固定为 `/workspace/operators/LongTail-Bench` 和
+`/workspace/operators/LongTail-Bench-fp16`，并在每次运行前删除对应项目中的旧
+`results/torch.json`，防止失败 case 复用历史结果。禁止让临时生成的脚本从
+`/workspace/operators` 直接调用两份 `api.py`，也不能只创建
+`/workspace/operators/results` 规避错误。
 只有本轮两条 LongTail-Bench 命令都成功且
 `longtail_perf_gpu.csv`、`longtail_perf_gpu_fp16.csv` 均非空后，才允许调用 collector，
 生成 80 条 cases 并报告 `status=success`。
 
-**Transformer Block — 从日志采集**：
+**Transformer Block — 使用 Skill 的确定性 runner 和 collector 生成 Result Contract 2.0**：
 
 ```bash
-grep "Time per iteration" /workspace/logs/transformer_block.log
+set -euo pipefail
+
+# 在这里完成前文的 run_transformer_block.py 命令。runner 失败时必须立即退出，
+# 禁止从旧日志或旧 CSV 调用 collector。
+test -s /workspace/results/transformer_block_cases.csv
+
+BENCHMARK_FINISHED_AT=$(date +%s)
+BENCHMARK_DURATION=$((BENCHMARK_FINISHED_AT - BENCHMARK_STARTED_AT))
+if [ "$BENCHMARK_DURATION" -le 0 ]; then BENCHMARK_DURATION=1; fi
+
+python3 /workspace/scripts/collect_cases.py \
+  --benchmark transformer_block \
+  --input-dir /workspace/results \
+  --output /workspace/results/result.json \
+  --duration-seconds "$BENCHMARK_DURATION"
 ```
+
+Transformer Block 任务已绑定独立的 `/workspace/benchmark_spec.yaml`，必须直接调用上述
+runner 和 collector。AIBenchAgent 会注入 `AIBENCH_TASK_ID`、
+`AIBENCH_WORKLOAD_FINGERPRINT` 和 `AIBENCH_BENCHMARK_*` 身份变量。runner 负责正确的
+inference 模式、CUDA 同步计时和原子 CSV 输出；collector 负责核对本轮 workload
+fingerprint、encoder/decoder 完整性、参数和有限延迟，再生成 2 条 cases、八个 summary
+metrics 以及符合 Result Contract 2.0 的 `result.json`。禁止由临时生成脚本解析日志、拼接
+`case_key` 或自定义 JSON 字段。
 
 ---
 

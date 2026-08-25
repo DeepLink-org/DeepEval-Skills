@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把 NVIDIA GEMM/Conv2d/LongTail CSV 确定性转换为 Result Contract 2.0。"""
+"""把 NVIDIA 算子测量 CSV 确定性转换为 Result Contract 2.0。"""
 
 from __future__ import annotations
 
@@ -42,14 +42,25 @@ def _boolean(row: Dict[str, str], name: str, source: Path, line: int) -> bool:
     return value == "1"
 
 
-def _latency(row: Dict[str, str], source: Path, line: int) -> float:
+def _non_negative_number(
+    row: Dict[str, str],
+    name: str,
+    source: Path,
+    line: int,
+) -> float:
     try:
-        value = float(row["baseline"])
+        value = float(row[name])
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"{source}:{line}: baseline must be a number") from exc
+        raise ValueError(f"{source}:{line}: {name} must be a number") from exc
     if not math.isfinite(value) or value < 0:
-        raise ValueError(f"{source}:{line}: baseline must be a non-negative finite number")
+        raise ValueError(
+            f"{source}:{line}: {name} must be a non-negative finite number"
+        )
     return value
+
+
+def _latency(row: Dict[str, str], source: Path, line: int) -> float:
+    return _non_negative_number(row, "baseline", source, line)
 
 
 def _read_gemm_cases(source: Path, dtype: str) -> List[Dict[str, object]]:
@@ -184,11 +195,15 @@ def _read_longtail_manifest(source: Path) -> Tuple[List[str], str]:
                 raise ValueError(f"{source}:{line}: op must be a non-empty string")
             row_run_token = (row.get("aibench_run_token") or "").strip()
             if not row_run_token:
-                raise ValueError(f"{source}:{line}: aibench_run_token must be a non-empty string")
+                raise ValueError(
+                    f"{source}:{line}: aibench_run_token must be a non-empty string"
+                )
             if run_token is None:
                 run_token = row_run_token
             elif row_run_token != run_token:
-                raise ValueError(f"{source}:{line}: aibench_run_token must be consistent")
+                raise ValueError(
+                    f"{source}:{line}: aibench_run_token must be consistent"
+                )
             if case_number in seen_numbers:
                 raise ValueError(f"{source}:{line}: duplicate NO: {case_number}")
             if operator in seen_operators:
@@ -200,6 +215,87 @@ def _read_longtail_manifest(source: Path) -> Tuple[List[str], str]:
         raise ValueError(f"{source}: no benchmark cases")
     assert run_token is not None
     return operators, run_token
+
+
+def _read_transformer_block_cases(
+    source: Path,
+    expected_workload_fingerprint: str,
+) -> List[Dict[str, object]]:
+    with source.open("r", encoding="utf-8-sig", newline="") as file_obj:
+        reader = csv.DictReader(file_obj)
+        required = {
+            "block_type",
+            "dtype",
+            "execution_mode",
+            "d_model",
+            "num_heads",
+            "ffn_hidden_size",
+            "batch_size",
+            "query_sequence_length",
+            "key_value_sequence_length",
+            "warmup_iterations",
+            "measurement_iterations",
+            "latency_ms",
+            "aibench_workload_fingerprint",
+        }
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"{source}: missing columns: {', '.join(sorted(missing))}")
+
+        cases = []
+        seen_block_types = set()
+        for line, row in enumerate(reader, start=2):
+            block_type = (row.get("block_type") or "").strip()
+            if block_type not in {"encoder", "decoder"}:
+                raise ValueError(
+                    f"{source}:{line}: block_type must be encoder or decoder"
+                )
+            if block_type in seen_block_types:
+                raise ValueError(f"{source}:{line}: duplicate block_type: {block_type}")
+            if row.get("dtype") != "f32":
+                raise ValueError(f"{source}:{line}: dtype must be f32")
+            if row.get("execution_mode") != "inference":
+                raise ValueError(f"{source}:{line}: execution_mode must be inference")
+            if row.get("aibench_workload_fingerprint") != expected_workload_fingerprint:
+                raise ValueError(
+                    f"{source}:{line}: result does not belong to the active workload"
+                )
+            seen_block_types.add(block_type)
+            cases.append(
+                {
+                    "dimensions": {
+                        "block_type": block_type,
+                        "dtype": "f32",
+                        "execution_mode": "inference",
+                        "d_model": _integer(row, "d_model", source, line),
+                        "num_heads": _integer(row, "num_heads", source, line),
+                        "ffn_hidden_size": _integer(
+                            row, "ffn_hidden_size", source, line
+                        ),
+                        "batch_size": _integer(row, "batch_size", source, line),
+                        "query_sequence_length": _integer(
+                            row, "query_sequence_length", source, line
+                        ),
+                        "key_value_sequence_length": _integer(
+                            row, "key_value_sequence_length", source, line
+                        ),
+                        "warmup_iterations": _integer(
+                            row, "warmup_iterations", source, line, minimum=0
+                        ),
+                        "measurement_iterations": _integer(
+                            row, "measurement_iterations", source, line
+                        ),
+                    },
+                    "metrics": {
+                        "latency_ms": _non_negative_number(
+                            row, "latency_ms", source, line
+                        )
+                    },
+                }
+            )
+    if seen_block_types != {"encoder", "decoder"}:
+        raise ValueError(f"{source}: expected exactly one encoder and one decoder case")
+    return cases
 
 
 def _percentile(values: List[float], quantile: float) -> float:
@@ -236,45 +332,71 @@ def build_result(
         manifest_source = input_dir / "longtail_cases_input.csv"
         if not manifest_source.is_file():
             raise ValueError(f"missing longtail case manifest: {manifest_source}")
-        expected_longtail_identities, expected_longtail_run_token = _read_longtail_manifest(
-            manifest_source
+        expected_longtail_identities, expected_longtail_run_token = (
+            _read_longtail_manifest(manifest_source)
         )
+    elif benchmark == "transformer_block":
+        filenames = ()
+        metric_prefix = "transformer_block"
     else:
         raise ValueError(f"unsupported benchmark: {benchmark}")
 
     cases = []
     sources = []
     longtail_identities = []
-    for filename, dtype in filenames:
+    if benchmark == "transformer_block":
+        filename = "transformer_block_cases.csv"
         source = input_dir / filename
         if not source.is_file():
-            raise ValueError(f"missing {benchmark} CSV: {source}")
+            raise ValueError(f"missing transformer_block CSV: {source}")
         sources.append(filename)
-        if benchmark == "longtail":
-            source_cases = case_reader(source, dtype, expected_longtail_run_token)
-        else:
-            source_cases = case_reader(source, dtype)
-        cases.extend(source_cases)
-        if benchmark == "longtail":
-            longtail_identities.append([item["dimensions"]["operator"] for item in source_cases])
+        cases.extend(
+            _read_transformer_block_cases(
+                source,
+                _required_env("AIBENCH_WORKLOAD_FINGERPRINT"),
+            )
+        )
+    else:
+        for filename, dtype in filenames:
+            source = input_dir / filename
+            if not source.is_file():
+                raise ValueError(f"missing {benchmark} CSV: {source}")
+            sources.append(filename)
+            if benchmark == "longtail":
+                source_cases = case_reader(source, dtype, expected_longtail_run_token)
+            else:
+                source_cases = case_reader(source, dtype)
+            cases.extend(source_cases)
+            if benchmark == "longtail":
+                longtail_identities.append(
+                    [item["dimensions"]["operator"] for item in source_cases]
+                )
 
     if benchmark == "longtail" and any(
         identities != expected_longtail_identities for identities in longtail_identities
     ):
-        raise ValueError("longtail f32 and f16 CSVs must match the run-scoped case manifest")
+        raise ValueError(
+            "longtail f32 and f16 CSVs must match the run-scoped case manifest"
+        )
 
     latencies = [float(item["metrics"]["latency_ms"]) for item in cases]
     total = len(cases)
+    latency_label = "latency" if benchmark == "transformer_block" else "baseline"
     metrics = {
         f"{metric_prefix}_total_cases": total,
         f"{metric_prefix}_success_cases": total,
         f"{metric_prefix}_failed_cases": 0,
-        f"{metric_prefix}_baseline_avg_ms": sum(latencies) / total,
-        f"{metric_prefix}_baseline_p50_ms": _percentile(latencies, 0.50),
-        f"{metric_prefix}_baseline_p95_ms": _percentile(latencies, 0.95),
-        f"{metric_prefix}_baseline_min_ms": min(latencies),
-        f"{metric_prefix}_baseline_max_ms": max(latencies),
+        f"{metric_prefix}_{latency_label}_avg_ms": sum(latencies) / total,
+        f"{metric_prefix}_{latency_label}_p50_ms": _percentile(latencies, 0.50),
+        f"{metric_prefix}_{latency_label}_p95_ms": _percentile(latencies, 0.95),
+        f"{metric_prefix}_{latency_label}_min_ms": min(latencies),
+        f"{metric_prefix}_{latency_label}_max_ms": max(latencies),
     }
+    source_description = " and ".join(sources)
+    if benchmark == "transformer_block":
+        source_description += " measured latency_ms"
+    else:
+        source_description += " baseline values"
     return {
         "schema_version": "2.0",
         "task_id": _required_env("AIBENCH_TASK_ID"),
@@ -282,7 +404,9 @@ def build_result(
         "benchmark": {
             "spec_id": _required_env("AIBENCH_BENCHMARK_SPEC_ID"),
             "spec_version": _required_env("AIBENCH_BENCHMARK_SPEC_VERSION"),
-            "case_schema_version": _required_env("AIBENCH_BENCHMARK_CASE_SCHEMA_VERSION"),
+            "case_schema_version": _required_env(
+                "AIBENCH_BENCHMARK_CASE_SCHEMA_VERSION"
+            ),
             "spec_sha256": _required_env("AIBENCH_BENCHMARK_SPEC_SHA256"),
         },
         "metrics": metrics,
@@ -291,25 +415,35 @@ def build_result(
             "workload_fingerprint": _required_env("AIBENCH_WORKLOAD_FINGERPRINT"),
             "measurement_count": total,
             "duration_seconds": duration_seconds,
-            "source": " and ".join(sources) + " baseline values",
+            "source": source_description,
         },
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--benchmark", choices=("gemm", "conv", "longtail"), default="gemm")
+    parser.add_argument(
+        "--benchmark",
+        choices=("gemm", "conv", "longtail", "transformer_block"),
+        default="gemm",
+    )
     parser.add_argument("--input-dir", type=Path, default=Path("/workspace/operators"))
-    parser.add_argument("--output", type=Path, default=Path("/workspace/results/result.json"))
+    parser.add_argument(
+        "--output", type=Path, default=Path("/workspace/results/result.json")
+    )
     parser.add_argument("--duration-seconds", type=float, required=True)
     args = parser.parse_args()
     if not math.isfinite(args.duration_seconds) or args.duration_seconds <= 0:
         parser.error("--duration-seconds must be a positive finite number")
 
-    result = build_result(args.input_dir, args.duration_seconds, benchmark=args.benchmark)
+    result = build_result(
+        args.input_dir, args.duration_seconds, benchmark=args.benchmark
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_name(args.output.name + ".tmp")
-    encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    encoded = json.dumps(
+        result, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    )
     temporary.write_text(encoded, encoding="utf-8")
     json.loads(temporary.read_text(encoding="utf-8"))
     os.replace(temporary, args.output)
