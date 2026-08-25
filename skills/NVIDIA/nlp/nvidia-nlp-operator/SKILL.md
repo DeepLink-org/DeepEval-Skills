@@ -52,6 +52,10 @@ test -f /workspace/scripts/run_gemm_conv.sh
 
 先编译一次，再选择算子、模式和精度。`baseline` 会写入 CSV 的 `baseline` 列；`test` 会写入 `time`、`score` 列并使用已有 baseline 比较。
 
+GEMM 必须直接使用 `nvcc` 编译。不要运行本项目的顶层 CMake：该 CMake 同时配置
+Conv2d 并强制查找 cuDNN，而 GEMM 镜像不保证包含 cuDNN，CMake 失败后继续使用旧
+CSV 会产生“评测成功但没有执行 kernel”的假阳性。
+
 ```bash
 /workspace/scripts/build_cuda_ops.sh
 /workspace/scripts/run_gemm_conv.sh all baseline all

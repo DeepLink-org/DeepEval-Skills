@@ -51,6 +51,7 @@ claude-code 使用示例
 | | 推理 | NVIDIA | [nvidia-nlp-inference](skills/NVIDIA/nlp/nvidia-nlp-inference) ✅ | 实现语言模型在线推理性能评测，包括吞吐量、延迟、显存占用等关键指标。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
 | | 算子 | NVIDIA | [nvidia-nlp-operator](skills/NVIDIA/nlp/nvidia-nlp-operator) ✅ | 提供常见NLP基础算子（GEMM、Attention、FFN、LayerNorm等）性能测试，支持不同精度、批量大小、序列长度的组合测试。 |
+| | | 寒武纪 MLU | [cambricon-nlp-operator](skills/Cambricon/nlp/cambricon-nlp-operator) ✅ | 提供常见NLP基础算子（GEMM、Attention、FFN、LayerNorm等）性能测试，支持不同精度、批量大小、序列长度的组合测试。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
 | 视觉场景 | 检测训练 | NVIDIA | [nvidia-cv-detection](skills/NVIDIA/cv/nvidia-cv-detection) ✅ | 实现目标检测模型（如YOLO、Faster R-CNN）训练性能评测，包括数据增强、损失计算、后处理等环节。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
@@ -110,6 +111,9 @@ DeepEval-Skills/
 │   │   ├── audio/                   #   语音场景
 │   │   │   └── nvidia-audio-asr/         # 语音识别推理评测
 │   │   └── render/                  #   渲染场景（规划中）
+│   ├── Cambricon/                   # 寒武纪 MLU 评测
+│   │   └── nlp/                     #   语言场景
+│   │       └── cambricon-nlp-operator/   # MLU 算子评测
 │   └── Hygon/                       # Hygon DCU 评测
 │       └── science/                 #   科学计算场景
 │           └── hygon-science-weather/    # 气象科学推理评测
@@ -120,7 +124,7 @@ DeepEval-Skills/
 
 **命名约定**：
 - Skill 目录路径按 `{芯片}/{场景}/{芯片}-{场景}-{任务类型}` 嵌套组织
-  - 芯片：`NVIDIA`、`Hygon`、`Ascend` 等（首字母大写）
+  - 芯片：`NVIDIA`、`Cambricon`、`Hygon`、`Ascend` 等（首字母大写）
   - 场景：`nlp`、`cv`、`mm`（多模态）、`science`、`audio` 等
   - 任务类型：`training`、`finetune`、`inference`、`operator`、`detection`、`pretrain`、`segmentation`、`t2i`、`t2v`、`asr` 等
 - Skill 目录名（末级）使用全小写 + 短横线连接，如 `nvidia-nlp-training`
