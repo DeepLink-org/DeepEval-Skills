@@ -1,6 +1,6 @@
-# `llama2_7b`：Llama-2-7B-Chat Profile
+# `llama1_7b`：Llama-1-7B Profile
 
-本 Profile 定义 Llama-2-7B-Chat 的已验证精度矩阵基线。通用输入输出和脚本变量见`../model_profiles.md`。
+本 Profile 定义 Llama-1-7B 的已验证精度矩阵基线。通用输入输出和脚本变量见`../model_profiles.md`。
 
 ## 拓扑与配置
 
@@ -17,7 +17,7 @@ OUTPUT_LEN=1024
 NUM_PROMPTS=1000
 MAX_CONCURRENCY=64
 BENCH_TIMEOUT=1800
-DATASET_PREFER='llama2_7b_sharegpt.json'
+DATASET_PREFER='llama1_7b_sharegpt.json'
 PRECISIONS='fp16 int8'
 ```
 
@@ -31,16 +31,19 @@ INT8 weight-only 场景把 KV cache 填满、持续 request retraction 后导致
 `--dtype float16 --torchao-config int8wo`；脚本为每个精度隔离服务、日志和结果，最后写入
 `/workspace/results/result.json`。
 
-顶层评测脚本的前三个有效命令必须从当前 Generator 结果契约把本次任务的动态字段以**字面量**导出；
-不得先检查变量、不得使用默认值、`unknown`、固定 hash、变量展开或猜测值。矩阵脚本会生成并校验最终
-结果、导出 `DURATION_SECONDS`；调用后顶层脚本必须直接结束，不得用 Python、`python -c`、heredoc 或
-shell 逻辑重建、校验或覆盖 `result.json`：
+顶层评测脚本的前三个有效命令必须把本次 Generator 结果契约给出的动态身份字段以**字面量**导出；
+不得先检查变量、不得使用默认值、`unknown`、固定 hash、变量展开或任何猜测值。这样不同任务、版本和
+workload 的结果不会误复用：
 
 ```bash
 export TASK_ID="<当前任务 ID>"
 export WORKLOAD_FINGERPRINT="<当前结果契约给出的 workload_fingerprint>"
 export SCHEMA_VERSION="1.2"
 ```
+
+矩阵脚本负责生成并校验最终 `/workspace/results/result.json`，并导出 `DURATION_SECONDS`。外层评测脚本
+在调用后必须直接结束：禁止再通过 Python、`python -c`、heredoc 或 shell 逻辑读取、重建、校验或覆盖
+`result.json`。
 
 ```bash
 GPU_IDS="$GPU_IDS" TP="$TP" PORT="$PORT" READY_TIMEOUT="$READY_TIMEOUT" INPUT_LEN="$INPUT_LEN" \

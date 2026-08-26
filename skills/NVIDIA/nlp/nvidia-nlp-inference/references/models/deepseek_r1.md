@@ -31,12 +31,12 @@ GPU_IDS="$GPU_IDS" TP="$TP" PORT="$PORT" READY_TIMEOUT="$READY_TIMEOUT" TRUST_RE
   EXTRA_SERVER_ARGS="$EXTRA_SERVER_ARGS" bash /workspace/scripts/serve.sh
 INPUT_LEN="$INPUT_LEN" OUTPUT_LEN="$OUTPUT_LEN" NUM_PROMPTS="$NUM_PROMPTS" \
   DATASET_PREFER="$DATASET_PREFER" HOST=127.0.0.1 PORT="$PORT" bash /workspace/scripts/bench.sh
-bash /workspace/scripts/calc.sh /workspace/logs/bench.log "$TP"
+bash /workspace/scripts/calc.sh /workspace/logs/bench.log "$TP" /workspace/logs/bench.csv
 ```
 
 `TRUST_REMOTE_CODE=1` 是该 Profile 的显式基线选择，不是通用默认值。仅对可信、固定版本的模型代码启用。
 
-结果位于`/workspace/results/result.json`，日志和 CSV 位于 `/workspace/logs/`。
+结果位于`/workspace/results/result.json`；`bench.csv` 位于 `/workspace/logs/`，但内容为单行 JSON summary。
 
 ## 双机 16 卡配置与流程
 
@@ -67,4 +67,4 @@ export NCCL_NVLS_ENABLE=0
 按 `../multi_host.md` 的固定步骤执行：所有节点启动 `serve_multi_host.sh`；rank0 执行
 `bench.sh`；最后由 rank0 执行 `calc.sh`，其 TP 使用 `NNODES * GPUS_PER_NODE`。
 
-结果位于`/workspace/results/result.json`，日志和 CSV 位于 `/workspace/logs/`。
+结果位于`/workspace/results/result.json`；`bench.csv` 位于 `/workspace/logs/`，但内容为单行 JSON summary。

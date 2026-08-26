@@ -12,24 +12,17 @@
 nvidia-nlp-inference/
 ├── SKILL.md                       # 通用评测契约和流程
 ├── scripts/                       # 通用 serve / bench / calc 脚本
-│   ├── serve.sh
-│   ├── bench.sh
-│   ├── calc.sh
+│   ├── common.sh                  # 解析模型/数据集路径，并校验正整数与 GPU 编号
+│   ├── server.sh                  # 启动单机服务、等待就绪并记录 PID/日志
+│   ├── serve_multi_host.sh        # 启动多机服务并检查各 rank 就绪
+│   ├── bench.sh                   # 使用固定随机负载调用 sglang.bench_serving，写入压测日志
+│   ├── calc.sh                    # 从 benchmark 日志提取指标，生成统一 result.json
 │   └── <model>/                   # 仅该模型需要的定制脚本（可选）
 └── references/
     ├── model_profiles.md          # 模型 profile 索引和通用配置
+    ├── multi_host.md              # 多机执行流程
     └── models/<model>.md          # 模型专用参数、拓扑和执行顺序（可选）
 ```
-
-## 通用 skill 与模型专用 skill 的关系
-
-`nvidia-nlp-inference` 与 `deepseek_r1/`、`llama2_7b/` 等每模型一个目录的专用 skill
-是**并列且相互独立**的 skill：
-
-- 通用 skill 不会自动调用、继承或修改任何模型专用 skill 的脚本、reference 或结果；
-- 模型专用 skill 也不会自动复用本目录的通用脚本；其行为仅由该目录自身的 `SKILL.md` 定义；
-- 一次评测应根据任务选择其中一个 skill 的流程，不应同时串联两套流程；
-- 它们可以使用相同的镜像、模型或数据集，但这不表示存在代码或配置依赖。
 
 ## 在通用 skill 中接入模型
 

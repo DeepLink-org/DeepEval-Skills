@@ -22,7 +22,8 @@
 | `generic` | 本文件下方 | 单机 | 未列出的、SGLang 支持的普通文本模型默认流程。 |
 | `deepseek_r1` | models/deepseek_r1.md | 单机 8 卡；双机 16 卡 | DeepSeek-R1 已验证基线。 |
 | `llama2_7b` | models/llama2_7b.md | 单机 1 卡 | Llama-2-7B FP16/INT8 精度矩阵基线。 |
-| `llama2_70b` | models/llama2_70b.md | 单机 8 卡 | Llama-2-70B FP16 SGLang 已验证基线。 |
+| `llama2_70b` | models/llama2_70b.md | 单机 8 卡 | Llama-2-70B FP16/INT8 精度矩阵基线。 |
+| `llama1_7b` | models/llama2_7b.md | 单机 1 卡 | Llama-1-7B FP16/INT8 精度矩阵基线。 |
 
 新增模型时，在此表增加稳定模型键和链接；不要把模型专有参数重新写回本文件。
 
@@ -35,10 +36,10 @@
 | `scripts/serve.sh` | `MODEL_PATH`、`GPU_IDS`、`TP`、`SERVER_HOST`、`PORT`、`READY_TIMEOUT`、`TRUST_REMOTE_CODE`、`EXTRA_SERVER_ARGS`、`LOG_ROOT` |
 | `scripts/serve_multi_host.sh` | 上述服务变量（除 `TP`）以及 `MASTER_ADDR`、`MASTER_PORT`、`NNODES`、`NODE_RANK`、`GPUS_PER_NODE`、`NCCL_*`、`NVSHMEM_*` |
 | `scripts/bench.sh` | `MODEL_PATH`、`DATASET_PATH`、`DATASET_PREFER`、`INPUT_LEN`、`OUTPUT_LEN`、`NUM_PROMPTS`、`MAX_CONCURRENCY`、`BENCH_TIMEOUT`、`HOST`、`PORT`、`LOG_ROOT` |
-| `scripts/calc.sh` | 第一个位置参数 `LOG_PATH`、第二个位置参数 `TP`、`RESULT_ROOT`、`TASK_ID`（可选，默认 `NVIDIA_nlp_inference`）、`SCHEMA_VERSION`（可选，默认 `1.0`） |
+| `scripts/calc.sh` | 第一个位置参数 `LOG_PATH`、第二个位置参数 `TP`、第三个位置参数 `SUMMARY_PATH`（默认同目录的 `bench.csv`）、`RESULT_ROOT`、由评测脚本从当前结果契约导出的 `TASK_ID`、`WORKLOAD_FINGERPRINT`、`SCHEMA_VERSION=1.2` |
 
 所有 profile 都使用本地 JSON 数据集，`bench.sh` 不会联网下载 ShareGPT。产物固定为
-`/workspace/logs/{serve,bench}.log`、`bench.csv` 和 `/workspace/results/result.json`；多机
+`/workspace/logs/{serve,bench}.log`、`bench.csv`（单行 JSON summary）和 `/workspace/results/result.json`；多机
 服务日志另带 rank 后缀。
 
 `GPU_IDS` 是单节点参与评测的逗号分隔物理 GPU 编号，例如 `GPU_IDS=0`。服务脚本会将其

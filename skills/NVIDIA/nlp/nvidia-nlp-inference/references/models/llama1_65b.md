@@ -1,6 +1,6 @@
-# `llama2_70b`：Llama-2-70B-Chat Profile
+# `llama1_65b`：Llama-1-65B Profile
 
-本 Profile 定义 Llama-2-70B-Chat 的单机 8 卡 FP16/INT8 weight-only 精度矩阵基线。通用输入
+本 Profile 定义 Llama-1-65B 的单机 8 卡 FP16/INT8 weight-only 精度矩阵基线。通用输入
 输出和脚本变量见 `../model_profiles.md`。
 
 ## 拓扑与配置

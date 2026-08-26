@@ -7,7 +7,7 @@ description: NVIDIA GPU 上基于 SGLang 的通用文本推理评测技能。用
 
 本技能提供统一的单机 SGLang 推理评测骨架。必须通过本技能的`scripts/serve.sh`、`scripts/bench.sh`、`scripts/calc.sh` 执行，不要绕过脚本直接调用 `sglang.launch_server`、`sglang.bench_serving` 或内嵌指标采集代码。
 
-`scripts/` 根目录仅放跨模型通用脚本（含 `serve_multi_host.sh`）；仅特定模型使用的流程放入 `scripts/<model>/`。当前 Llama-2 精度矩阵位于 `scripts/llama2/`，不能用于其他模型。
+`scripts/` 根目录仅放跨模型通用脚本（含 `serve_multi_host.sh`）；仅特定模型使用的流程放入 `scripts/<model>/`。当前 Llama 精度矩阵位于 `scripts/llama/`，不能用于未声明该流程的模型。
 
 先从 `references/model_profiles.md` 的索引选择模型。Profile：`generic` 保留在索引文件中，`deepseek_r1`、`llama2_7b` 等模型专有 Profile 位于 `references/models/`。多机评测还需要读取`references/multi_host.md`。模型特有流程（例如精度矩阵）由 Profile 明确启用，不应混入通用流程。
 
@@ -114,30 +114,35 @@ TP=<profile_tp> READY_TIMEOUT=1200 bash /workspace/scripts/serve.sh
 HOST=127.0.0.1 PORT=30000 INPUT_LEN=1024 OUTPUT_LEN=1024 NUM_PROMPTS=1000 \
   bash /workspace/scripts/bench.sh
 
-# 3. 解析最后一次 benchmark 汇总，生成唯一的结构化结果。
-bash /workspace/scripts/calc.sh /workspace/logs/bench.log "$TP"
+# 3. calc.sh 直接生成最终 v1.2 结果；不得再转换或覆盖 result.json。
+bash /workspace/scripts/calc.sh /workspace/logs/bench.log "$TP" /workspace/logs/bench.csv
 ```
 
 **注意**
 - 若 GPU 数量改变，`TP` 必须同步调整，并与 `calc.sh` 保持一致
 - 默认 `HOST=127.0.0.1`、`PORT=30000`，若服务运行在其他节点上，按实际 IP 调整 `HOST`
 - **不要修改** `INPUT_LEN`、`OUTPUT_LEN`、`NUM_PROMPTS` 默认值，否则与基线指标不可比
+- 顶层评测脚本必须用 `trap` 在 `EXIT` 时停止本次 `serve.pid` 记录的服务；即使 `bench.sh` 或
+  `calc.sh` 失败也必须清理，避免重试因遗留服务占满 GPU 而被拒绝。
 
 **输出产物**
 
 产物固定为：`/workspace/logs/serve.log`、`serve.pid`、`bench.log`、`bench.csv` 和
-`/workspace/results/result.json`。`calc.sh` 只接受完整压测日志，并校验所有指标为有限数值。
+`/workspace/results/result.json`。当前 SGLang 版本虽将结构化结果命名为 `bench.csv`，但其内容是
+**单行 JSON summary**，其中 `completed` 是样本数、`duration` 是测量时长；禁止用 `tail`、`head`
+或 `wc` 按 CSV 行数解析。`calc.sh` 同时读取完整 `bench.log` 与该 JSON summary，并直接生成最终结果。
 流程结束后可执行 `kill "$(cat /workspace/logs/serve.pid)"` 停止服务并释放资源。
 
 ## 指标契约
 
-`calc.sh` 默认输出 Agent 结果契约的 `schema_version="1.0"` 与
-`task_id="NVIDIA_nlp_inference"`；如任务 ID 被执行器显式改名，可在调用时传入
-`TASK_ID=<actual_task_id>` 覆盖。`result.json` 的格式固定如下：
+`calc.sh` 输出 Agent 结果契约的 `schema_version="1.2"`。评测脚本必须从当前 Generator 结果契约
+导出本次任务的 `TASK_ID`、`WORKLOAD_FINGERPRINT` 与 `SCHEMA_VERSION`；不得猜测、伪造、复用旧值或
+写死其它任务的值。每次调用 `bench.sh` 会先清除该日志目录下旧的 `bench.csv`，确保汇总为单个 JSON 对象。
+`result.json` 的格式固定如下：
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.2",
   "task_id": "NVIDIA_nlp_inference",
   "status": "success",
   "metrics": {
@@ -149,12 +154,24 @@ bash /workspace/scripts/calc.sh /workspace/logs/bench.log "$TP"
     "mean_ttft_ms": 0,
     "mean_tpot_ms": 0,
     "mean_itl_ms": 0
+  },
+  "metadata": {
+    "workload_fingerprint": "<Agent injected fingerprint>",
+    "measurement_count": 1,
+    "duration_seconds": 1.0,
+    "source": "/workspace/logs/bench.log, /workspace/logs/bench.csv"
   }
 }
 ```
 
 `output_tokens_per_sec_per_gpu = output_token_throughput / TP`。不得用单卡日志或
-其他路径替代该全局结果；精度矩阵的汇总由专用脚本产生后，再按 profile 的要求写入最终结果。
+其他路径替代该全局结果；禁止在 `calc.sh` 成功后重新生成、转换或覆盖 `result.json`。精度矩阵的
+汇总由专用脚本产生后，再按 profile 的要求写入最终结果。
+
+如果 profile 指定专用编排脚本已生成并校验 `result.json`，顶层任务脚本只做三件事：在开头以
+当前 Generator 结果契约中的**字面量**导出 `TASK_ID`、`WORKLOAD_FINGERPRINT`、`SCHEMA_VERSION`，设置
+profile 参数，然后调用专用脚本。不得在顶层任务脚本内嵌 `python -c`、heredoc、JSON 重建、JSON 校验或
+结果覆盖；这些操作必须由预置的 Skill 脚本完成。不要先用 `${VAR:?}` 检查再期望外部环境提供这些值。
 
 ## 新模型接入规则
 
