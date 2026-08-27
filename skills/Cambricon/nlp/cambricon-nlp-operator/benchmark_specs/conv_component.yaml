@@ -1,0 +1,88 @@
+schema_version: "1.0"
+
+benchmark:
+  spec_id: operator.conv2d_backward_component
+  spec_version: "1.0.0"
+  case_schema_version: "1"
+  display_name: Conv2d Backward Component
+
+case:
+  dimensions:
+    - name: phase
+      type: string
+      enum: [backward_data, backward_filter]
+    - name: dtype
+      type: string
+      enum: [f16, f32]
+    - name: batch_size
+      type: integer
+      minimum: 1
+    - name: input_channels
+      type: integer
+      minimum: 1
+    - name: input_height
+      type: integer
+      minimum: 1
+    - name: input_width
+      type: integer
+      minimum: 1
+    - name: output_channels
+      type: integer
+      minimum: 1
+    - name: kernel_height
+      type: integer
+      minimum: 1
+    - name: kernel_width
+      type: integer
+      minimum: 1
+    - name: padding_height
+      type: integer
+      minimum: 0
+    - name: padding_width
+      type: integer
+      minimum: 0
+    - name: stride_height
+      type: integer
+      minimum: 1
+    - name: stride_width
+      type: integer
+      minimum: 1
+  metrics:
+    - name: latency_ms
+      unit: ms
+      direction: lower_is_better
+      required: true
+
+summary_metrics:
+  - name: conv_component_total_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: conv_component_success_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: conv_component_failed_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: conv_component_latency_avg_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: conv_component_latency_p50_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: conv_component_latency_p95_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: conv_component_latency_min_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: conv_component_latency_max_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
