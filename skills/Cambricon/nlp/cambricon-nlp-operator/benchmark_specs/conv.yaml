@@ -1,0 +1,85 @@
+schema_version: "1.0"
+
+benchmark:
+  spec_id: operator.conv2d
+  spec_version: "2.0.0"
+  case_schema_version: "1"
+  display_name: Conv2d
+
+case:
+  dimensions:
+    - name: dtype
+      type: string
+      enum: [f16, f32]
+    - name: batch_size
+      type: integer
+      minimum: 1
+    - name: input_channels
+      type: integer
+      minimum: 1
+    - name: input_height
+      type: integer
+      minimum: 1
+    - name: input_width
+      type: integer
+      minimum: 1
+    - name: output_channels
+      type: integer
+      minimum: 1
+    - name: kernel_height
+      type: integer
+      minimum: 1
+    - name: kernel_width
+      type: integer
+      minimum: 1
+    - name: padding_height
+      type: integer
+      minimum: 0
+    - name: padding_width
+      type: integer
+      minimum: 0
+    - name: stride_horizontal
+      type: integer
+      minimum: 1
+    - name: stride_vertical
+      type: integer
+      minimum: 1
+  metrics:
+    - name: latency_ms
+      unit: ms
+      direction: lower_is_better
+      required: true
+
+summary_metrics:
+  - name: conv_total_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: conv_success_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: conv_failed_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: conv_baseline_avg_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: conv_baseline_p50_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: conv_baseline_p95_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: conv_baseline_min_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: conv_baseline_max_ms
+    unit: ms
+    direction: lower_is_better
+    required: true

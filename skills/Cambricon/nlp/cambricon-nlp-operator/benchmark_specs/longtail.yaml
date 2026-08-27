@@ -1,0 +1,56 @@
+schema_version: "1.0"
+
+benchmark:
+  spec_id: operator.longtail
+  spec_version: "1.0.0"
+  case_schema_version: "1"
+  display_name: LongTail Operators
+
+case:
+  dimensions:
+    - name: operator
+      type: string
+      min_length: 1
+      max_length: 128
+    - name: dtype
+      type: string
+      enum: [f16, f32]
+  metrics:
+    - name: latency_ms
+      unit: ms
+      direction: lower_is_better
+      required: true
+
+summary_metrics:
+  - name: longtail_total_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: longtail_success_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: longtail_failed_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: longtail_baseline_avg_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: longtail_baseline_p50_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: longtail_baseline_p95_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: longtail_baseline_min_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: longtail_baseline_max_ms
+    unit: ms
+    direction: lower_is_better
+    required: true

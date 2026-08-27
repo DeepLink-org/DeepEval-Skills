@@ -1,0 +1,82 @@
+schema_version: "1.0"
+
+benchmark:
+  spec_id: operator.transformer_block
+  spec_version: "1.0.0"
+  case_schema_version: "1"
+  display_name: Transformer Block
+
+case:
+  dimensions:
+    - name: block_type
+      type: string
+      enum: [encoder, decoder]
+    - name: dtype
+      type: string
+      enum: [f32]
+    - name: execution_mode
+      type: string
+      enum: [inference]
+    - name: d_model
+      type: integer
+      minimum: 1
+    - name: num_heads
+      type: integer
+      minimum: 1
+    - name: ffn_hidden_size
+      type: integer
+      minimum: 1
+    - name: batch_size
+      type: integer
+      minimum: 1
+    - name: query_sequence_length
+      type: integer
+      minimum: 1
+    - name: key_value_sequence_length
+      type: integer
+      minimum: 1
+    - name: warmup_iterations
+      type: integer
+      minimum: 0
+    - name: measurement_iterations
+      type: integer
+      minimum: 1
+  metrics:
+    - name: latency_ms
+      unit: ms
+      direction: lower_is_better
+      required: true
+
+summary_metrics:
+  - name: transformer_block_total_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: transformer_block_success_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: transformer_block_failed_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: transformer_block_latency_avg_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: transformer_block_latency_p50_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: transformer_block_latency_p95_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: transformer_block_latency_min_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: transformer_block_latency_max_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
