@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Convert collect_results.sh artifacts into the AIBenchAgent result-contract v1.2."""
 import argparse
+import csv
 import json
 import math
 from pathlib import Path
@@ -8,6 +9,41 @@ from pathlib import Path
 
 def finite(value):
     return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def percentile(values, fraction):
+    """Linear-interpolated percentile for the benchmark p50/p95 contract."""
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+
+
+def baseline_values(artifact, name):
+    """Load the validated baseline samples instead of reducing them to a mean."""
+    path = Path(artifact.get("path", ""))
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as stream:
+            rows = list(csv.DictReader(stream))
+        values = [float(row["baseline"]) for row in rows]
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"cannot read baseline samples for {name}: {exc}") from exc
+    if len(values) != artifact.get("rows") or not values or not all(
+        finite(value) and value > 0 for value in values
+    ):
+        raise SystemExit(f"invalid baseline samples for {name}")
+    return values
+
+
+def add_baseline_metrics(metrics, prefix, values, *, aggregate=False):
+    total = len(values)
+    metrics[f"{prefix}_total_cases"] = total
+    success_key = f"{prefix}_total_success_cases" if aggregate else f"{prefix}_success_cases"
+    metrics[success_key] = total
+    metrics[f"{prefix}_baseline_avg"] = round(sum(values) / total, 6)
+    metrics[f"{prefix}_baseline_p50"] = round(percentile(values, 0.50), 6)
+    metrics[f"{prefix}_baseline_p95"] = round(percentile(values, 0.95), 6)
 
 
 def main():
@@ -32,7 +68,7 @@ def main():
         "all": ("gemm_fp16", "gemm_fp32", "conv_fp16", "conv_fp32", "longtail_fp16", "longtail_fp32", "transformer_block"),
     }[args.target]
 
-    metrics, count = {}, 0
+    metrics, count, grouped_values = {}, 0, {}
     for name in prefixes:
         artifact = artifacts.get(name)
         if not isinstance(artifact, dict) or artifact.get("valid") is not True:
@@ -45,12 +81,17 @@ def main():
             metrics["transformer_decoder_seconds"] = values[1]
             count += 2
         else:
-            value = artifact.get("mean_baseline")
             rows = artifact.get("rows")
-            if not finite(value) or value <= 0 or not isinstance(rows, int) or rows <= 0:
+            if not isinstance(rows, int) or rows <= 0:
                 raise SystemExit(f"invalid numeric artifact: {name}")
-            metrics[f"{name}_baseline_mean"] = value
+            values = baseline_values(artifact, name)
+            add_baseline_metrics(metrics, name, values)
+            family = name.rsplit("_", 1)[0]
+            grouped_values.setdefault(family, []).extend(values)
             count += rows
+
+    for family, values in grouped_values.items():
+        add_baseline_metrics(metrics, family, values, aggregate=True)
 
     result = {
         "schema_version": "1.2",
