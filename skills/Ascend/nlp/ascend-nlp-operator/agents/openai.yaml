@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ascend NLP Operator"
+  short_description: "在 Ascend 910B 上执行算子精度与性能评测"
+  default_prompt: "使用 $ascend-nlp-operator 在 Ascend 910B 上运行指定的算子精度或性能基准。"

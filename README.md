@@ -52,6 +52,7 @@ claude-code 使用示例
 | | | 其他芯片 | ⏳ 敬请期待 | |
 | | 算子 | NVIDIA | [nvidia-nlp-operator](skills/NVIDIA/nlp/nvidia-nlp-operator) ✅ | 提供常见NLP基础算子（GEMM、Attention、FFN、LayerNorm等）性能测试，支持不同精度、批量大小、序列长度的组合测试。 |
 | | | 寒武纪 MLU | [cambricon-nlp-operator](skills/Cambricon/nlp/cambricon-nlp-operator) ✅ | 提供常见NLP基础算子（GEMM、Attention、FFN、LayerNorm等）性能测试，支持不同精度、批量大小、序列长度的组合测试。 |
+| | | 华为 Ascend | [ascend-nlp-operator](skills/Ascend/nlp/ascend-nlp-operator) ✅ | 支持 Ascend 910B 算子精度、原生 CANN GEMM、CUDA 口径 Conv2d、长尾算子及 Transformer Block 评测。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
 | 视觉场景 | 检测训练 | NVIDIA | [nvidia-cv-detection](skills/NVIDIA/cv/nvidia-cv-detection) ✅ | 实现目标检测模型（如YOLO、Faster R-CNN）训练性能评测，包括数据增强、损失计算、后处理等环节。 |
 | | | 其他芯片 | ⏳ 敬请期待 | |
@@ -114,6 +115,9 @@ DeepEval-Skills/
 │   ├── Cambricon/                   # 寒武纪 MLU 评测
 │   │   └── nlp/                     #   语言场景
 │   │       └── cambricon-nlp-operator/   # MLU 算子评测
+│   ├── Ascend/                      # 华为 Ascend NPU 评测
+│   │   └── nlp/                     #   语言场景
+│   │       └── ascend-nlp-operator/      # 910B 算子评测
 │   └── Hygon/                       # Hygon DCU 评测
 │       └── science/                 #   科学计算场景
 │           └── hygon-science-weather/    # 气象科学推理评测
