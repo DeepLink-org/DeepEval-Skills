@@ -1,6 +1,24 @@
 ---
 name: metax-nlp-operator
 description: 沐曦 MetaX GPU 算子精度与性能评测技能。支持 accuracy、GEMM、Conv2d（FP16/FP32）、长尾算子、Transformer Block 测试任务，用于指导 executor 完成容器启动、MetaX/MACA 环境确认、编译、基准值生成、精度验证、结果持久化与性能指标采集的完整流程。
+metadata:
+  benchmark_specs:
+    accuracy: benchmark_specs/accuracy.yaml
+    gemm: benchmark_specs/gemm.yaml
+    conv: benchmark_specs/conv.yaml
+    longtail: benchmark_specs/longtail.yaml
+    transformer_block: benchmark_specs/transformer_block.yaml
+---
+
+### 触发条件
+
+当用户提出以下任一请求时启动本 Skill：
+
+- 在 MetaX GPU 上生成 GEMM 或 Conv2d 算子基准值
+- 执行 MetaX 长尾算子或 Transformer Block 性能测试
+- 执行 MetaX 算子精度验证
+- 运行 MetaX operator benchmark
+
 ---
 
 ### 环境变量定义
@@ -82,7 +100,7 @@ MACA Runtime、CMake、make、g++ 和 pandas；启动后按下文命令验证，
 ### 选择算子类型
 
 以任务配置中的 `test_case` 为唯一选择依据。支持 `accuracy`、`gemm`、`conv`、
-`longtail`、`transformer` 和 `all`。只执行指定类别；只有 `all` 才执行全部类别。
+`longtail`、`transformer_block` 和 `all`。只执行指定类别；只有 `all` 才执行全部类别。
 
 ### 容器创建命令
 
@@ -158,24 +176,21 @@ CPU 真值已经随镜像生成并存放在：
 **MetaX 普通算子全量验证**
 
 ```bash
-cd "/workspace/operators/accuracy_test"
-mkdir -p "$RESULT_ROOT/accuracy/mx_accuracy_result"
-
-CUDA_VISIBLE_DEVICES=0 \
-PYLOGLEVEL=INFO \
-CUBLAS_WORKSPACE_CONFIG=:4096:8 \
-/opt/conda/bin/python cuda_op_validate.py \
-  "/workspace/operators/accuracy_test/cpu_ground_truth" \
-  "$RESULT_ROOT/accuracy/mx_accuracy_result" \
-  2>&1 | tee "$LOG_ROOT/accuracy/mx_accuracy.log"
+python3 /workspace/scripts/run_accuracy.py \
+  --project-root /workspace/operators/accuracy_test \
+  --reference-dir /workspace/operators/accuracy_reference_cpu \
+  --regenerate-cpu-reference \
+  --output-dir "$RESULT_ROOT/accuracy" \
+  --device "${CUDA_DEVICE_ID:-0}" \
+  2>&1 | tee "$LOG_ROOT/accuracy/accuracy.log"
 ```
 **精度结果**
 
 完整验证生成：
 
 ```text
-$RESULT_ROOT/accuracy/mx_accuracy_result/cuda_val_result.csv
-$RESULT_ROOT/accuracy/mx_accuracy_result/cuda_val_result.json
+$RESULT_ROOT/accuracy/mx_val_result.csv
+$RESULT_ROOT/accuracy/mx_val_result.json
 ```
 
 CSV 和 JSON 保存相同的聚合通过状态：
@@ -234,15 +249,15 @@ ldd "/workspace/operators/speed_test/cuda_ops/build/conv"
 cd "/workspace/operators/speed_test"
 
 for dtype in f16 f32; do
-  cp "gemm_${dtype}.csv" "$RESULT_ROOT/gemm/gemm_${dtype}_baseline.csv"
+  cp "gemm_${dtype}.csv" "$RESULT_ROOT/gemm/gemm_${dtype}.csv"
 done
 
 CUDA_VISIBLE_DEVICES=0 /opt/conda/bin/python test_gemm.py \
-  "$RESULT_ROOT/gemm/gemm_f16_baseline.csv" 16 1 \
+  "$RESULT_ROOT/gemm/gemm_f16.csv" 16 1 \
   2>&1 | tee "$LOG_ROOT/gemm/gemm_f16.log"
 
 CUDA_VISIBLE_DEVICES=0 /opt/conda/bin/python test_gemm.py \
-  "$RESULT_ROOT/gemm/gemm_f32_baseline.csv" 32 1 \
+  "$RESULT_ROOT/gemm/gemm_f32.csv" 32 1 \
   2>&1 | tee "$LOG_ROOT/gemm/gemm_f32.log"
 ```
 
@@ -255,68 +270,55 @@ CUDA_VISIBLE_DEVICES=0 /opt/conda/bin/python test_gemm.py \
 cd "/workspace/operators/speed_test"
 
 for dtype in f16 f32; do
-  cp "conv_${dtype}.csv" "$RESULT_ROOT/conv/conv_${dtype}_baseline.csv"
+  cp "conv_${dtype}.csv" "$RESULT_ROOT/conv/conv_${dtype}.csv"
 done
 
 CUDA_VISIBLE_DEVICES=0 /opt/conda/bin/python test_conv.py \
-  "$RESULT_ROOT/conv/conv_f16_baseline.csv" 16 1 \
+  "$RESULT_ROOT/conv/conv_f16.csv" 16 1 \
   2>&1 | tee "$LOG_ROOT/conv/conv_f16.log"
 
 CUDA_VISIBLE_DEVICES=0 /opt/conda/bin/python test_conv.py \
-  "$RESULT_ROOT/conv/conv_f32_baseline.csv" 32 1 \
+  "$RESULT_ROOT/conv/conv_f32.csv" 32 1 \
   2>&1 | tee "$LOG_ROOT/conv/conv_f32.log"
 ```
 
 ### 长尾算子
 
-#### 普通版本
+#### FP32/FP16 版本
 
 ```bash
-cd "/workspace/operators/speed_test/LongTail-Bench"
-
-PYTHONPATH="/workspace/operators/speed_test/LongTail-Bench" \
-CUDA_VISIBLE_DEVICES=0 \
-/opt/conda/bin/python -m long_tail_bench.api.api \
-  -f "/workspace/operators/speed_test/longtail_perf_gpu.csv" \
-  --outcsv "$RESULT_ROOT/longtail/ltout_mx_gpu.csv" \
-  --validate \
-  2>&1 | tee "$LOG_ROOT/longtail/longtail_gpu.log"
+/opt/conda/bin/python /workspace/scripts/run_longtail.py \
+  --operators-root /workspace/operators \
+  --output-dir "$RESULT_ROOT/longtail" \
+  --log-dir "$LOG_ROOT/longtail" \
+  --device "${CUDA_DEVICE_ID:-0}" \
+  --warmup "${BENCH_WARMUP:-10}" \
+  --iterations "${LONGTAIL_ITERATIONS:-100}"
 ```
 
-每个算子预热 10 次，随后同步并执行 1000 次。输出 baseline 为 1000 次总耗时，单位秒。
-
-`--validate` 按现有脚本接口保留；当前不计算 score。
-
-#### FP16 版本
-
-```bash
-cd "/workspace/operators/speed_test/LongTail-Bench-fp16"
-
-PYTHONPATH="/workspace/operators/speed_test/LongTail-Bench-fp16" \
-CUDA_VISIBLE_DEVICES=0 \
-/opt/conda/bin/python -m long_tail_bench.api.api \
-  -f "/workspace/operators/speed_test/longtail_perf_gpu_fp16.csv" \
-  --outcsv "$RESULT_ROOT/longtail/ltout_mx_gpu_fp16.csv" \
-  --validate \
-  2>&1 | tee "$LOG_ROOT/longtail/longtail_gpu_fp16.log"
-```
+runner 为每次运行生成 token，校验 FP32/FP16 case 集合，统一把原始秒转换为 Result Contract 要求的毫秒，并原子发布结果 CSV。
+必须只调用该 runner，不要直接调用 `long_tail_bench.api.api`，也不要向其传入
+`--exec_mode`、`--iterations` 或 `--warmup` 等不支持的参数。runner 会选择带
+MetaX PyTorch 的解释器，并自动从 FP16 输入中排除 FP32-only 的 `batched_nms`。
 
 ### Transformer Block 测试
 
 ```bash
-cd "/workspace/operators/speed_test/transformer_block"
-
-CUDA_VISIBLE_DEVICES=0 /opt/conda/bin/python test.py \
+set -euo pipefail
+: "${AIBENCH_WORKLOAD_FINGERPRINT:?AIBENCH_WORKLOAD_FINGERPRINT is required}"
+/opt/conda/bin/python /workspace/scripts/run_transformer_block.py \
+  --project-root /workspace/operators/speed_test/transformer_block \
+  --output "$RESULT_ROOT/transformer/transformer_block_cases.csv" \
+  --device "${CUDA_DEVICE_ID:-0}" \
+  --warmup-iterations "${BENCH_WARMUP:-20}" \
+  --measurement-iterations "${TRANSFORMER_ITERATIONS:-1000}" \
   2>&1 | tee "$LOG_ROOT/transformer/transformer_block.log"
-
-grep "Time per iteration" "$LOG_ROOT/transformer/transformer_block.log" \
-  > "$RESULT_ROOT/transformer/transformer_block_result.txt"
 ```
 
 默认配置为 `d_model=512`、`n_head=8`、`ffn_hidden=2048`、`batch_size=32`、
 `seq_len=512`、预热 20 次、迭代 1000 次和 FP32。
 
-当前代码在 `train()` 模式执行前向，不执行 backward；不要描述为完整训练性能。当前计时未显式调用 `torch.cuda.synchronize()`，若用户只要求“能跑”，不要擅自修改代码。
+当前代码执行 FP32 inference 前向，不执行 backward；不要描述为完整训练性能。
 
 ---
 
@@ -326,8 +328,8 @@ grep "Time per iteration" "$LOG_ROOT/transformer/transformer_block.log" \
 |---|---|---|
 | GEMM | `baseline` | MetaX 实测耗时，ms，越低越好 |
 | Conv2d | `baseline` | 前向、权重反向和输入反向耗时之和，ms，越低越好 |
-| 长尾算子 | `baseline` | 1000 次执行总耗时，秒，越低越好 |
-| Transformer Block | `Time per iteration` | Encoder/Decoder 前向单次迭代耗时，秒 |
+| 长尾算子 | `baseline` | 单次延迟，ms，越低越好 |
+| Transformer Block | `latency_ms` | Encoder/Decoder 前向单次迭代耗时，ms |
 | 精度 | `passed` 与用例计数 | 基于镜像内 CPU 真值；必须结合误差日志判断 |
 
 不得混合毫秒与秒，不得根据单算子冒烟结果推断全量结果。
@@ -339,10 +341,10 @@ grep "Time per iteration" "$LOG_ROOT/transformer/transformer_block.log" \
 采集以下 CSV 的全部 `baseline` 和参数列：
 
 ```text
-$RESULT_ROOT/gemm/gemm_f16_baseline.csv
-$RESULT_ROOT/gemm/gemm_f32_baseline.csv
-$RESULT_ROOT/conv/conv_f16_baseline.csv
-$RESULT_ROOT/conv/conv_f32_baseline.csv
+$RESULT_ROOT/gemm/gemm_f16.csv
+$RESULT_ROOT/gemm/gemm_f32.csv
+$RESULT_ROOT/conv/conv_f16.csv
+$RESULT_ROOT/conv/conv_f32.csv
 ```
 
 确认：
@@ -352,16 +354,19 @@ $RESULT_ROOT/conv/conv_f32_baseline.csv
 import pandas as pd
 
 paths = [
-    "/workspace/results/gemm/gemm_f16_baseline.csv",
-    "/workspace/results/gemm/gemm_f32_baseline.csv",
-    "/workspace/results/conv/conv_f16_baseline.csv",
-    "/workspace/results/conv/conv_f32_baseline.csv",
+    "/workspace/results/gemm/gemm_f16.csv",
+    "/workspace/results/gemm/gemm_f32.csv",
+    "/workspace/results/conv/conv_f16.csv",
+    "/workspace/results/conv/conv_f32.csv",
 ]
 for path in paths:
     df = pd.read_csv(path)
     assert "baseline" in df.columns
-    assert "time" not in df.columns
-    assert "score" not in df.columns
+    # test_gemm.py/test_conv.py may omit empty optional columns; if present,
+    # they must remain empty and are not part of the Result Contract metrics.
+    for optional in ("time", "score"):
+        if optional in df.columns:
+            assert df[optional].isna().all()
     values = pd.to_numeric(df["baseline"], errors="coerce")
     assert values.notna().all() and (values > 0).all()
     print(path, len(df), values.notna().sum())
@@ -370,47 +375,94 @@ PY
 
 #### 长尾算子
 
-采集：
+采集（runner 输出的本轮副本）：
 
 ```text
-$RESULT_ROOT/longtail/ltout_mx_gpu.csv
-$RESULT_ROOT/longtail/ltout_mx_gpu_fp16.csv
+$RESULT_ROOT/longtail/longtail_fp32.csv
+$RESULT_ROOT/longtail/longtail_fp16.csv
 ```
 
 读取每个算子的 `op` 和 `baseline`。
 
 #### Transformer Block
 
-```bash
-grep "Time per iteration" "$LOG_ROOT/transformer/transformer_block.log"
-```
+采集 `$RESULT_ROOT/transformer/transformer_block_cases.csv`，其中必须包含 encoder 和
+decoder 两个 case 及本轮 `aibench_workload_fingerprint`。
 
 #### 精度测试
 
 采集：
 
 ```text
-$RESULT_ROOT/accuracy/mx_accuracy_result/cuda_val_result.csv
-$RESULT_ROOT/accuracy/mx_accuracy_result/cuda_val_result.json
-$LOG_ROOT/accuracy/mx_accuracy.log
-$LOG_ROOT/accuracy/mx_conv_accuracy.log
+$RESULT_ROOT/accuracy/mx_val_result.csv
+$RESULT_ROOT/accuracy/mx_val_result.json
+$RESULT_ROOT/accuracy/aibench_workload_fingerprint.txt
+$LOG_ROOT/accuracy/accuracy.log
 ```
 
 不得仅交付 CSV/JSON 而丢弃误差日志。
 
 #### result.json 汇总约束
 
-按照 Generator 当前提供的 `result.json` 协议生成结果，禁止在 Skill 中固定
-`schema_version`、`task_id` 或 `workload_fingerprint`。
+#### 执行契约（Result Contract 2.0）
+
+所有由 Generator 生成的 benchmark shell 都必须以以下约束运行：
+
+```bash
+set -euo pipefail
+: "${AIBENCH_TASK_ID:?AIBENCH_TASK_ID is required}"
+: "${AIBENCH_WORKLOAD_FINGERPRINT:?AIBENCH_WORKLOAD_FINGERPRINT is required}"
+: "${AIBENCH_BENCHMARK_SPEC_ID:?AIBENCH_BENCHMARK_SPEC_ID is required}"
+: "${AIBENCH_BENCHMARK_SPEC_VERSION:?AIBENCH_BENCHMARK_SPEC_VERSION is required}"
+: "${AIBENCH_BENCHMARK_CASE_SCHEMA_VERSION:?AIBENCH_BENCHMARK_CASE_SCHEMA_VERSION is required}"
+: "${AIBENCH_BENCHMARK_SPEC_SHA256:?AIBENCH_BENCHMARK_SPEC_SHA256 is required}"
+```
+
+AIBenchAgent 会注入 `AIBENCH_TASK_ID`、`AIBENCH_WORKLOAD_FINGERPRINT` 和
+`AIBENCH_BENCHMARK_*` 身份变量。外层 shell 必须在调用任何 runner 或 collector
+时保留这些变量，不得重新生成、覆盖、清空或使用固定常量替代。若变量缺失，必须
+立即退出，禁止继续执行并生成结果。
+
+各 runner 只负责执行实际 benchmark、校验本轮产物并原子写入 CSV；不得由外层临时
+脚本解析日志、拼接 `case_key`、计算 summary metrics 或手写 `result.json`。collector
+只负责从本轮结果目录读取 runner 产物、校验 workload fingerprint 和 case identity，
+并生成 Result Contract 2.0 的 `result.json`。
+
+Transformer runner 必须直接导入并测量 `EncoderLayer` 和 `DecoderLayer`，不调用或
+解析镜像内 `test.py` 的标准输出；runner 生成的 CSV 必须包含 encoder、decoder 各一条
+记录及本轮 `aibench_workload_fingerprint`。
+
+必须使用 `collect_cases.py` 生成符合 Result Contract 2.0 的结果，禁止手写或拼接
+`result.json`。结果顶层结构必须包含 `schema_version`、`task_id`、`status`、
+`benchmark`、`metrics`、`cases` 和 `metadata`；`task_id`、benchmark spec 身份和
+`workload_fingerprint` 必须从本轮环境变量或实际产物读取，禁止固定常量。
 
 - 只汇总 `test_case` 实际执行的类别；禁止为未执行类别填入零值并宣称成功。
 - GEMM、Conv2d 和长尾算子从结果目录中的实际 CSV 汇总 `baseline`；不要从镜像源码目录读取被遗漏的旧文件。
 - 精度测试汇总实际用例数、通过数和通过率，并保留 CPU 真值来源和详细误差日志作为证据。
-- Transformer 单独汇总秒级 `Time per iteration`，不得与毫秒指标混算。
+- Transformer 的 `latency_ms` 与 GEMM/Conv/LongTail 使用相同的毫秒单位。
 - `measurement_count` 使用实际纳入汇总的测量项数量，`source` 指向实际读取的 CSV、JSON 或日志，`duration_seconds` 使用真实测量时长。
 
 CSV/JSON 保留逐用例明细，`result.json` 只保留有限数值汇总和 Generator 当前协议
 要求的测量证据。禁止使用占位、估算、模拟、默认值或全零数据生成成功结果。
+
+统一采集命令如下（`COLLECTOR_TARGET` 必须与配置中的 `test_case` 一致）：
+
+```bash
+BENCHMARK_FINISHED_AT_NS=$(date +%s%N)
+DURATION_SECONDS=$(python3 -c 'import sys; print(max((int(sys.argv[2])-int(sys.argv[1]))/1e9,1e-9))' "$BENCHMARK_STARTED_AT_NS" "$BENCHMARK_FINISHED_AT_NS")
+python3 /workspace/scripts/collect_cases.py \
+  --benchmark "$COLLECTOR_TARGET" \
+  --input-dir /workspace/results \
+  --output /workspace/results/result.json \
+  --duration-seconds "$DURATION_SECONDS"
+test -s /workspace/results/result.json
+```
+
+collector 统一将性能 CSV 的 `baseline` 映射为 `cases[*].metrics.latency_ms`，并计算
+`*_total_cases`、`*_success_cases`、`*_failed_cases`、平均值、P50、P95、最小值和最大值。
+任一 case 缺失、baseline 非有限正数、case identity 不一致、fingerprint 过期或结果
+文件缺失时必须返回非零退出码，不得继续报告成功。
 
 Shell 变量与 heredoc 内的 Python 变量不共享作用域。使用 `<<'PY'` 时，把动态值
 通过位置参数或环境变量显式传入 Python，例如：

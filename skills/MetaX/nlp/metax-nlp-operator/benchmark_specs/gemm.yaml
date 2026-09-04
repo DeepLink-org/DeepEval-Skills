@@ -1,0 +1,65 @@
+schema_version: "1.0"
+
+benchmark:
+  spec_id: operator.gemm
+  spec_version: "1.0.0"
+  case_schema_version: "1"
+  display_name: GEMM
+
+case:
+  dimensions:
+    - name: dtype
+      type: string
+      enum: [f16, f32]
+    - name: m
+      type: integer
+      minimum: 1
+    - name: n
+      type: integer
+      minimum: 1
+    - name: k
+      type: integer
+      minimum: 1
+    - name: trans_a
+      type: boolean
+    - name: trans_b
+      type: boolean
+  metrics:
+    - name: latency_ms
+      unit: ms
+      direction: lower_is_better
+      required: true
+
+summary_metrics:
+  - name: gemm_total_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: gemm_success_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: gemm_failed_cases
+    unit: count
+    direction: neutral
+    required: true
+  - name: gemm_baseline_avg_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: gemm_baseline_p50_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: gemm_baseline_p95_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: gemm_baseline_min_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
+  - name: gemm_baseline_max_ms
+    unit: ms
+    direction: lower_is_better
+    required: true
